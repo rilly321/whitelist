@@ -1,5 +1,5 @@
 -- ═══════════════════════════════════════════════
---  Kerosene | V1  by Wobble
+--  Kerosene | V1.0  by Wobble
 -- ═══════════════════════════════════════════════
 
 -- ── Menu state ────────────────────────────────
@@ -1586,7 +1586,7 @@ local function CreateKeroMenu()
             local smoothingSlider = CreateSlider(panel, "Smoothing", -13, 128, "CombatOption3", "Combat", 0, 100)
             smoothingSlider:SetVisible(aimbotBtn.isChecked and options.Combat.CameraSilentMode == "Camera")
 
-            local methodDD = MakeThemedDropdown(panel, 10, 68, 115,
+            local methodDD = MakeThemedDropdown(panel, 10, 68, 140,
                 {"Camera", "Silent"},
                 options.Combat.CameraSilentMode or "Camera",
                 function(val)
@@ -1596,7 +1596,7 @@ local function CreateKeroMenu()
                 end)
             methodDD:SetVisible(aimbotBtn.isChecked)
 
-            local bodyDD = MakeThemedDropdown(panel, 10, 98, 115,
+            local bodyDD = MakeThemedDropdown(panel, 10, 98, 140,
                 {"Lower Torso", "Torso", "Head", "Random"},
                 options.Combat.TargetMode or "Torso",
                 function(val) options.Combat.TargetMode = val end)
@@ -1615,7 +1615,7 @@ local function CreateKeroMenu()
 
             local aimbotBindListening = false
             local keybindButton = vgui.Create("DButton", panel)
-            keybindButton:SetPos(10, 38) ; keybindButton:SetSize(115, 20) ; keybindButton:SetText("")
+            keybindButton:SetPos(10, 38) ; keybindButton:SetSize(140, 20) ; keybindButton:SetText("")
             keybindButton:SetVisible(aimbotBtn.isChecked)
             keybindButton.Paint = function(self, w, h)
                 local bg = aimbotBindListening and Color(130,45,45,255) or (self:IsHovered() and COL_BTNHOV or COL_BTN)
@@ -2445,7 +2445,7 @@ local KERO_ASCII = [[
  | |/ / / _ \| '__/ _ \/ __/ / _ \ '_ \ / _ \
  | ' < |  __/| | | (_) \__ \|  __/ | | |  __/
  |_|\_\ \___||_|  \___/|___/ \___|_| |_|\___|
-                                        v1
+                                        v1.01
 ]]
 
 local function PrintKeroBanner()
