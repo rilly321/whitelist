@@ -3,7 +3,7 @@
 -- ═══════════════════════════════════════════════
 
 -- ── Menu state ────────────────────────────────
-local KERO_VERSION = "v1"
+local KERO_VERSION = "v1.01"
 
 -- Remote whitelist setup:
 -- 1. Upload a plain-text file to a raw URL (GitHub Raw / Gist Raw works well).
