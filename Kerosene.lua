@@ -1,17 +1,10 @@
 -- ═══════════════════════════════════════════════
---  Kerosene | V1.0  by Wobble
+--  Kerosene | V1.41  by Wobble
 -- ═══════════════════════════════════════════════
 
 -- ── Menu state ────────────────────────────────
-local KERO_VERSION = "v1.01"
+local KERO_VERSION = "v1.41"
 
--- Remote whitelist setup:
--- 1. Upload a plain-text file to a raw URL (GitHub Raw / Gist Raw works well).
--- 2. Put one SteamID64 or SteamID per line.
--- 3. Paste that raw file URL below.
--- Example file contents:
--- 76561198000000000
--- STEAM_0:1:12345678
 local KERO_WHITELIST = {
     url = "https://github.com/rilly321/whitelist/blob/main/whitelist.txt",
     requestTimeout = 15,
@@ -127,16 +120,39 @@ local tabAlpha      = 255        -- content fade alpha (0-255)
 local tabFading     = false      -- true while fade-out is running
 local tabFadeTarget = nil        -- the tab we are switching TO
 
+-- ── Menu layout constants (promoted so UpdateContentPanel doesn't upvalue-capture from CreateKeroMenu) ──
+local WIN_W, WIN_H  = 620, 340
+local SIDEBAR_W     = 108
+local HEADER_H      = 36
+local FOOTER_H      = 22
+
+-- ── VFX state (promoted for same reason) ──
+local _vfxTime   = 0
+local _sparks    = {}
+local _sparkNext = 0
+local _tabFlash  = 0
+
+-- ── Panel refs (set inside CreateKeroMenu, referenced by UpdateContentPanel/BuildSidebar) ──
+local buttonPanel  = nil
+local contentPanel = nil
+
 -- Menu toggle key (persists across opens)
 local menuKey       = KEY_INSERT
 local menuKeyName   = "INSERT"
 local bindListening = false
+
+-- Panic key — hides all visuals without unloading
+local panicKey          = nil          -- unset by default
+local panicKeyName      = "NONE"
+local panicListening    = false
+local panicMode         = false        -- true while visuals are hidden
 
 -- ── Persistent options ────────────────────────
 local options = {
     Combat = {},
     Visuals = {},
     Misc    = {},
+    Players = {},
     Config  = {}
 }
 
@@ -145,6 +161,7 @@ local optionNames = {
     Combat  = { "Aimbot" },
     Visuals = { "Name", "Boxes", "Money", "Weapon", "Distance", "World ESP", "Suit Name", "Suit Health" },
     Misc    = { "Remove Recoil", "Remove Spread", "Combat Check" },
+    Players = {},
     Config  = {}
 }
 
@@ -165,6 +182,11 @@ local MiscColors = {
     ArmChams    = { color = Color(255, 100, 100, 255), rainbow = false },
     WeaponChams = { color = Color(100, 200, 255, 255), rainbow = false },
     CombatCheck = { color = Color(220, 100,  80, 255), rainbow = false },
+}
+
+local PlayerESPColors = {
+    Friend = { color = Color(100, 200, 255, 255) },
+    Enemy  = { color = Color(255, 110, 110, 255) },
 }
 
 -- World ESP entity class filter — list of class strings to show (empty = all)
@@ -224,6 +246,82 @@ local combatNotifs = {}
 -- Track last known state to avoid duplicate alerts
 local combatCheckLastHP  = {}
 local combatCheckLastShoot = {}
+local playerStates = {}
+local pendingLegacyWatchNames = {}
+
+local function GetPlayerStateID(ply)
+    if not IsValid(ply) then return nil end
+    local sid64 = ply:SteamID64()
+    if sid64 and sid64 ~= "" and sid64 ~= "0" then return sid64 end
+    local sid = ply:SteamID()
+    if sid and sid ~= "" then return sid end
+    return ply:Nick()
+end
+
+local function GetOrCreatePlayerState(id)
+    if not id or id == "" then return nil end
+    playerStates[id] = playerStates[id] or {}
+    return playerStates[id]
+end
+
+local function CleanupPlayerState(id)
+    local state = playerStates[id]
+    if not state then return end
+    if not state.friend and not state.enemy and not state.watch then
+        playerStates[id] = nil
+    end
+end
+
+local function RefreshCombatCheckTargets()
+    combatCheckTargets = {}
+    for _, ply in ipairs(player.GetAll()) do
+        local id = GetPlayerStateID(ply)
+        local state = id and playerStates[id] or nil
+        if state and state.watch then
+            table.insert(combatCheckTargets, ply:Nick())
+        end
+    end
+    table.sort(combatCheckTargets, function(a, b)
+        return string.lower(a) < string.lower(b)
+    end)
+    combatCheckTarget = combatCheckTargets[1] or ""
+end
+
+local function SetPlayerFlag(id, flag, enabled)
+    local state = GetOrCreatePlayerState(id)
+    if not state then return end
+    if flag == "friend" and enabled then state.enemy = false end
+    if flag == "enemy" and enabled then state.friend = false end
+    state[flag] = enabled or nil
+    CleanupPlayerState(id)
+    RefreshCombatCheckTargets()
+end
+
+local function PlayerHasFlag(ply, flag)
+    local id = GetPlayerStateID(ply)
+    local state = id and playerStates[id] or nil
+    return state and state[flag] or false
+end
+
+local function MigrateLegacyCombatTargets()
+    if #pendingLegacyWatchNames == 0 then return end
+    local remaining = {}
+    for _, wantedName in ipairs(pendingLegacyWatchNames) do
+        local matched = false
+        for _, ply in ipairs(player.GetAll()) do
+            if IsValid(ply) and string.lower(ply:Nick()) == string.lower(wantedName) then
+                local id = GetPlayerStateID(ply)
+                if id then SetPlayerFlag(id, "watch", true) end
+                matched = true
+                break
+            end
+        end
+        if not matched then
+            table.insert(remaining, wantedName)
+        end
+    end
+    pendingLegacyWatchNames = remaining
+end
 
 -- ── Targeted Suits filter ─────────────────────
 -- Display names shown in the UI dropdown
@@ -278,6 +376,19 @@ local function GetMiscColor(key, alpha)
     if feat.rainbow then return RainbowColor(visualHue, alpha or feat.color.a) end
     local c = feat.color
     return Color(c.r, c.g, c.b, alpha or c.a)
+end
+
+local function GetPlayerESPColor(ply, key)
+    local base = GetVisualColor(key)
+    if PlayerHasFlag(ply, "friend") then
+        local c = PlayerESPColors.Friend.color
+        return Color(c.r, c.g, c.b, base.a)
+    end
+    if PlayerHasFlag(ply, "enemy") then
+        local c = PlayerESPColors.Enemy.color
+        return Color(c.r, c.g, c.b, base.a)
+    end
+    return base
 end
 
 -- ── UI colour palette ─────────────────────────
@@ -1112,7 +1223,7 @@ local function CreateSlider(parent, text, x, y, optionKey, tab, min, max)
 end
 
 local function EmitMenuSparks(screenX, screenY, count, col)
-    if not (IsValid(keroFrame) and keroFrame._sparks) then return end
+    if not IsValid(keroFrame) then return end
 
     local fx, fy = keroFrame:GetPos()
     local rx = screenX - fx
@@ -1123,7 +1234,7 @@ local function EmitMenuSparks(screenX, screenY, count, col)
     col = col or COL_ACCENT
 
     for _ = 1, count do
-        table.insert(keroFrame._sparks, {
+        table.insert(_sparks, {
             x = rx,
             y = ry,
             vx = (math.random() - 0.5) * 90,
@@ -1135,8 +1246,8 @@ local function EmitMenuSparks(screenX, screenY, count, col)
         })
     end
 
-    while #keroFrame._sparks > 64 do
-        table.remove(keroFrame._sparks, 1)
+    while #_sparks > 64 do
+        table.remove(_sparks, 1)
     end
 end
 
@@ -1237,24 +1348,27 @@ local function SerialiseOptions()
     for key, feat in pairs(MiscColors) do
         table.insert(lines, "MCOL|"..key.."|"..ColourToStr(feat.color).."|"..(feat.rainbow and "1" or "0"))
     end
-    -- Save menu keybind
+    for key, feat in pairs(PlayerESPColors) do
+        table.insert(lines, "PCOL|"..key.."|"..ColourToStr(feat.color))
+    end
     table.insert(lines, "EXTRA|lastTab|"..(currentTab or "Combat"))
     table.insert(lines, "EXTRA|menuKey|"..tostring(menuKey))
     table.insert(lines, "EXTRA|menuKeyName|"..menuKeyName)
-    -- Save ESP arrangement
+    table.insert(lines, "EXTRA|panicKey|"..tostring(panicKey or "nil"))
+    table.insert(lines, "EXTRA|panicKeyName|"..panicKeyName)
     for elem, arr in pairs(ESPArrangement) do
         table.insert(lines, "ESPARR|"..elem.."|"..arr.anchor.."|"..tostring(arr.pad).."|"..tostring(arr.slot).."|"..(arr.bold and "1" or "0").."|"..(arr.outline and "1" or "0"))
     end
-    -- Save combat check targets (pipe-separated list)
     table.insert(lines, "EXTRA|combatCheckTargets|"..table.concat(combatCheckTargets, ";;"))
-    -- Save targeted suit filters (pipe-separated list of actual NW strings)
     local suitStr = {}
     for _, v in ipairs(targetedSuitFilters) do table.insert(suitStr, v) end
     table.insert(lines, "EXTRA|targetedSuitFilters|"..table.concat(suitStr, ";;"))
-    -- Save world ESP filters
     local worldStr = {}
     for _, v in ipairs(worldESPFilters) do table.insert(worldStr, v) end
     table.insert(lines, "EXTRA|worldESPFilters|"..table.concat(worldStr, ";;"))
+    for id, state in pairs(playerStates) do
+        table.insert(lines, "PSTATE|"..id.."|"..(state.friend and "1" or "0").."|"..(state.enemy and "1" or "0").."|"..(state.watch and "1" or "0"))
+    end
     return table.concat(lines, "\n")
 end
 
@@ -1283,6 +1397,22 @@ local function DeserialiseOptions(str)
                 if c then MiscColors[key].color = c end
                 MiscColors[key].rainbow = (rb == "1")
             end
+        elseif kind == "PCOL" then
+            local _, key, cs = string.match(line, "^([^|]+)|([^|]+)|(.+)")
+            if key and PlayerESPColors[key] then
+                local c = StrToColour(cs)
+                if c then PlayerESPColors[key].color = c end
+            end
+        elseif kind == "PSTATE" then
+            local _, id, friendFlag, enemyFlag, watchFlag = string.match(line, "^([^|]+)|([^|]+)|([^|]+)|([^|]+)|(.+)")
+            if id then
+                playerStates[id] = {
+                    friend = (friendFlag == "1"),
+                    enemy  = (enemyFlag == "1"),
+                    watch  = (watchFlag == "1"),
+                }
+                CleanupPlayerState(id)
+            end
         elseif kind == "ESPARR" then
             local _, elem, anchor, pad, slot, bold, outline = string.match(line, "^([^|]+)|([^|]+)|([^|]+)|([^|]+)|([^|]+)|?([^|]*)|?(.*)")
             if elem and ESPArrangement[elem] then
@@ -1300,21 +1430,25 @@ local function DeserialiseOptions(str)
                 if ki then menuKey = ki ; menuKeyName = input.GetKeyName(ki) or tostring(ki) end
             end
             if k == "menuKeyName" and v then menuKeyName = v end
+            if k == "panicKey" then
+                local ki = tonumber(v)
+                if ki then panicKey = ki ; panicKeyName = input.GetKeyName(ki) or tostring(ki)
+                else panicKey = nil ; panicKeyName = "NONE" end
+            end
+            if k == "panicKeyName" and v then panicKeyName = v end
             if k == "combatCheckTargets" then
                 combatCheckTargets = {}
                 if v and v ~= "" then
                     for part in string.gmatch(v, "([^;][^;]*)") do
-                        -- split on ";;" separator
                         table.insert(combatCheckTargets, part)
                     end
-                    -- re-split properly on ";;"
                     combatCheckTargets = {}
                     local raw = v
                     for part in (raw..";;"):gmatch("(.-);;" ) do
                         if part ~= "" then table.insert(combatCheckTargets, part) end
                     end
                 end
-                -- legacy single target fallback
+                pendingLegacyWatchNames = table.Copy(combatCheckTargets)
                 combatCheckTarget = combatCheckTargets[1] or ""
             end
             if k == "targetedSuitFilters" then
@@ -1333,10 +1467,9 @@ local function DeserialiseOptions(str)
                     end
                 end
             end
-            -- legacy single-value compat
             if k == "combatCheckTarget" and #combatCheckTargets == 0 then
                 combatCheckTarget = v or ""
-                if v and v ~= "" then combatCheckTargets = {v} end
+                if v and v ~= "" then pendingLegacyWatchNames = {v} end
             end
             if k == "targetedSuitFilter" and #targetedSuitFilters == 0 then
                 if v and v ~= "" then targetedSuitFilters = {v} end
@@ -1351,6 +1484,8 @@ local function DeserialiseOptions(str)
             end
         end
     end
+    MigrateLegacyCombatTargets()
+    RefreshCombatCheckTargets()
     SyncChamsFromOptions()
 end
 
@@ -1374,6 +1509,12 @@ end
 -- ════════════════════════════════════════════════
 local ToggleKeroMenu  -- defined fully after CreateKeroMenu
 
+-- Forward-declare module-level tab/sidebar builders (defined after CreateKeroMenu to keep
+-- their upvalue count independent from CreateKeroMenu's locals).
+local UpdateContentPanel
+local BuildSidebar
+local WireKeroMenu
+
 local function CreateKeroMenu()
     keroFrame = vgui.Create("DFrame")
     keroFrame:SetSize(620, 340)
@@ -1389,21 +1530,12 @@ local function CreateKeroMenu()
     keroFrame.btnMinim:SetVisible(false)
     keroFrame.btnClose:SetVisible(false)
 
-    -- Window dimensions
-    local WIN_W, WIN_H = 620, 340
-    local SIDEBAR_W    = 108
-    local HEADER_H     = 36
-    local FOOTER_H     = 22
+    -- Reset VFX state for this open
+    _vfxTime   = 0
+    _sparks    = {}
+    _sparkNext = 0
+    _tabFlash  = 0
 
-    -- VFX state: animated accent shimmer and spark particles
-    local _vfxTime   = 0
-    local _sparks    = {}  -- { x, y, vx, vy, life, maxLife, size, col? }
-    local _sparkNext = 0
-    -- Tab-switch flash burst
-    local _tabFlash      = 0      -- 0..1, decays on tab change
-
-    -- Expose spark list so shared click VFX can inject into it
-    keroFrame._sparks = _sparks
 
     keroFrame.Paint = function(self, w, h)
         local t = RealTime()
@@ -1531,22 +1663,32 @@ local function CreateKeroMenu()
         end
     end
 
-    local buttonPanel = vgui.Create("DPanel", keroFrame)
+    buttonPanel = vgui.Create("DPanel", keroFrame)
     buttonPanel:SetSize(SIDEBAR_W - 1, WIN_H - HEADER_H - FOOTER_H)
     buttonPanel:SetPos(0, HEADER_H)
     buttonPanel.Paint = function() end
 
-    local contentPanel = vgui.Create("DPanel", keroFrame)
+    contentPanel = vgui.Create("DPanel", keroFrame)
     contentPanel:SetSize(WIN_W - SIDEBAR_W - 1, WIN_H - HEADER_H - FOOTER_H)
     contentPanel:SetPos(SIDEBAR_W + 1, HEADER_H)
     contentPanel.Paint = function(self, w, h)
         -- content area is just the base bg colour, no extra box
     end
 
-    local function UpdateContentPanel(panel)
+    -- UpdateContentPanel, BuildSidebar, and WireKeroMenu are defined at module level
+    -- below CreateKeroMenu to avoid exceeding Lua's 60-upvalue limit on this function.
+    UpdateContentPanel(contentPanel)
+    WireKeroMenu()
+end -- end CreateKeroMenu
+
+-- ════════════════════════════════════════════════
+--  Tab content builder  (module-level — avoids >60 upvalue limit)
+-- ════════════════════════════════════════════════
+local TABS = { "Combat", "Visuals", "Misc", "Players", "Debug", "Config" }
+
+UpdateContentPanel = function(panel)
         panel:Clear()
         local pW = panel:GetWide()
-
         -- ══ COMBAT ═══════════════════════════════
         if currentTab == "Combat" then
 
@@ -1562,11 +1704,11 @@ local function CreateKeroMenu()
             end
             local fovColorData = options.Combat.FOVColorData
 
-            local fovColorBtn = MakeColorButton(panel, 360, 13,
+            local fovColorBtn = MakeColorButton(panel, 408, 13,
                 function() return fovColorData.color end,
                 function(c) fovColorData.color = c ; options.Combat.FOVColor = c end)
 
-            local fovRainbowBtn = MakeRainbowButton(panel, 386, 13,
+            local fovRainbowBtn = MakeRainbowButton(panel, 434, 13,
                 function() return fovColorData.rainbow end,
                 function(v) fovColorData.rainbow = v end)
 
@@ -1751,7 +1893,7 @@ local function CreateKeroMenu()
                         local DROP_H     = SEARCH_H + VISIBLE * ITEM_H
                         local sx, sy     = wespDD:LocalToScreen(0, 22)
 
-                        wespDropPanel = vgui.Create("DPanel", nil)
+                        wespDropPanel = vgui.Create("EditablePanel", nil)
                         wespDropPanel:SetPos(sx, sy) ; wespDropPanel:SetSize(DROP_W, DROP_H)
                         wespDropPanel:SetZPos(32767) ; wespDropPanel:MakePopup()
                         wespDropPanel:SetKeyboardInputEnabled(true)
@@ -1763,9 +1905,8 @@ local function CreateKeroMenu()
                             surface.SetDrawColor(COL_BORDER) ; surface.DrawOutlinedRect(0, 0, pw, ph, 1)
                         end
 
-                        -- Search bar at the top
                         local searchEntry = MakeThemedEntry(wespDropPanel, 2, 2, DROP_W - 4, SEARCH_H - 4, "Search...")
-                        searchEntry:SetKeyboardInputEnabled(true)
+                        searchEntry:SetUpdateOnType(true)
                         timer.Simple(0, function()
                             if IsValid(searchEntry) then searchEntry:RequestFocus() end
                         end)
@@ -1820,10 +1961,11 @@ local function CreateKeroMenu()
                         end
 
                         RebuildItems("")
-                        searchEntry.OnChange = function(self) RebuildItems(self:GetValue()) end
-                        searchEntry.OnKeyCodeTyped = function(self, kc)
-                            RebuildItems(self:GetValue())
+                        local function UpdateWorldESPSearch(self, val)
+                            RebuildItems(val or self:GetValue())
                         end
+                        searchEntry.OnChange = UpdateWorldESPSearch
+                        searchEntry.OnValueChange = UpdateWorldESPSearch
 
                         wespDropPanel.Think = function(self)
                             if not IsValid(wespBtn) then CloseWESPDrop() ; return end
@@ -1882,75 +2024,6 @@ local function CreateKeroMenu()
         elseif currentTab == "Misc" then
 
             local y = 10
-
-            -- ── Combat Check ────────────────────
-            -- Toggle on left, search box inline to its right, colour buttons far right
-            local combatCheckBtn = CreateToggleButton(panel, "Combat Check", 10, y, "MiscOption5", "Misc")
-            MakeRainbowButton(panel, pW - 40, y + 1,
-                function() return MiscColors.CombatCheck.rainbow end,
-                function(v) MiscColors.CombatCheck.rainbow = v  end)
-            MakeColorButton(panel, pW - 66, y + 1,
-                function() return MiscColors.CombatCheck.color end,
-                function(c) MiscColors.CombatCheck.color = c    end)
-
-            -- Player multi-select search box — sits inline to the right of the toggle
-            local function GetPlayerNicks()
-                local nicks = {}
-                for _, ply in ipairs(player.GetAll()) do
-                    if IsValid(ply) and ply ~= LocalPlayer() then
-                        table.insert(nicks, ply:Nick())
-                    end
-                end
-                table.sort(nicks)
-                return nicks
-            end
-
-            local function CombatTargetLabel()
-                if #combatCheckTargets == 0 then return "Add player..." end
-                if #combatCheckTargets == 1 then return combatCheckTargets[1] end
-                return combatCheckTargets[1] .. " (+" .. (#combatCheckTargets - 1) .. ")"
-            end
-
-            local ccMulti = MakeMultiSelectDropdown(panel, 158, y, 148,
-                GetPlayerNicks(),
-                combatCheckTargets,
-                function(val, nowSelected)
-                    -- combatCheckTargets already mutated by multi-select
-                    combatCheckTarget = combatCheckTargets[1] or ""
-                end,
-                CombatTargetLabel)
-            ccMulti:SetVisible(combatCheckBtn.isChecked)
-
-            -- Clear button — deselects all players
-            local ccClearBtn = vgui.Create("DButton", panel)
-            ccClearBtn:SetPos(312, y) ; ccClearBtn:SetSize(44, 22) ; ccClearBtn:SetText("")
-            ccClearBtn.Paint = function(self, w, h)
-                draw.RoundedBox(4, 0, 0, w, h, self:IsHovered() and COL_BTNHOV or COL_BTN)
-                surface.SetDrawColor(COL_BORDER) ; surface.DrawOutlinedRect(0, 0, w, h, 1)
-                draw.SimpleText("Clear", "DermaDefault", w/2, h/2, COL_TEXTMUT, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-            end
-            ccClearBtn.DoClick = function()
-                for i = #combatCheckTargets, 1, -1 do table.remove(combatCheckTargets, i) end
-                combatCheckTarget  = ""
-                -- Auto-save so the cleared state persists without a tab refresh
-                local cfgName = options.Config.LastProfileName
-                if cfgName and cfgName ~= "" then
-                    file.Write("kero_" .. cfgName .. ".txt", SerialiseOptions())
-                else
-                    file.Write("kero_default.txt", SerialiseOptions())
-                end
-            end
-            ccClearBtn:SetVisible(combatCheckBtn.isChecked)
-
-            combatCheckBtn.OnToggled = function(self, state)
-                ccMulti:SetVisible(state)
-                ccClearBtn:SetVisible(state)
-                if not state then
-                    for i = #combatCheckTargets, 1, -1 do table.remove(combatCheckTargets, i) end
-                    combatCheckTarget  = ""
-                end
-            end
-            y = y + 30
 
             -- ── Arm Chams ───────────────────────
             local armMatDD  -- forward-declare so OnToggled closure can reference it
@@ -2042,6 +2115,8 @@ local function CreateKeroMenu()
             y = y + 30
 
             -- ── Remove Camo ─────────────────────
+            local fullbrightBtn = CreateToggleButton(panel, "Fullbright", 10, y, "Fullbright", "Misc")
+            y = y + 30
             local removeCamoBtn = vgui.Create("DButton", panel)
             removeCamoBtn:SetPos(10, y) ; removeCamoBtn:SetSize(140, 22) ; removeCamoBtn:SetText("")
             removeCamoBtn.Paint = function(self, w, h)
@@ -2062,14 +2137,114 @@ local function CreateKeroMenu()
             CreateSlider(panel, "FOV Changer", 0, y, "CustomFOV", "Misc", 60, 120)
 
         -- ══ CONFIG ═══════════════════════════════
+        elseif currentTab == "Players" then
+
+            MigrateLegacyCombatTargets()
+            RefreshCombatCheckTargets()
+
+            local friendLbl = vgui.Create("DLabel", panel)
+            friendLbl:SetPos(10, 12) ; friendLbl:SetFont("DermaDefaultBold")
+            friendLbl:SetText("Friend ESP") ; friendLbl:SetTextColor(COL_TEXTPRI) ; friendLbl:SizeToContents()
+            MakeColorButton(panel, 96, 10,
+                function() return PlayerESPColors.Friend.color end,
+                function(c) PlayerESPColors.Friend.color = c end)
+
+            local enemyLbl = vgui.Create("DLabel", panel)
+            enemyLbl:SetPos(136, 12) ; enemyLbl:SetFont("DermaDefaultBold")
+            enemyLbl:SetText("Enemy ESP") ; enemyLbl:SetTextColor(COL_TEXTPRI) ; enemyLbl:SizeToContents()
+            MakeColorButton(panel, 220, 10,
+                function() return PlayerESPColors.Enemy.color end,
+                function(c) PlayerESPColors.Enemy.color = c end)
+
+            local infoLbl = vgui.Create("DLabel", panel)
+            infoLbl:SetPos(260, 8) ; infoLbl:SetFont("DermaDefault")
+            infoLbl:SetText("Friend blocks aimbot, Enemy prioritises.")
+            infoLbl:SetTextColor(COL_TEXTMUT) ; infoLbl:SizeToContents()
+
+            local infoLbl2 = vgui.Create("DLabel", panel)
+            infoLbl2:SetPos(260, 20) ; infoLbl2:SetFont("DermaDefault")
+            infoLbl2:SetText("Watch feeds combat check.")
+            infoLbl2:SetTextColor(COL_TEXTMUT) ; infoLbl2:SizeToContents()
+
+            local scroll = panel:Add("DScrollPanel")
+            scroll:SetPos(10, 40) ; scroll:SetSize(pW - 20, panel:GetTall() - 50)
+            scroll:GetVBar():SetWide(4)
+
+            local players = {}
+            for _, ply in ipairs(player.GetAll()) do
+                if IsValid(ply) and ply ~= LocalPlayer() then
+                    table.insert(players, ply)
+                end
+            end
+            table.sort(players, function(a, b)
+                return string.lower(a:Nick()) < string.lower(b:Nick())
+            end)
+
+            local function AddStateButton(row, id, flag, text, x)
+                local btn = row:Add("DButton")
+                btn:SetPos(x, 3) ; btn:SetSize(56, 22) ; btn:SetText("")
+                btn.Paint = function(self, w, h)
+                    local state = playerStates[id] or {}
+                    local enabled = state[flag] or false
+                    local bg = enabled and Color(COL_ACCENT.r, COL_ACCENT.g, COL_ACCENT.b, 36) or (self:IsHovered() and COL_BTNHOV or COL_BTN)
+                    draw.RoundedBox(4, 0, 0, w, h, bg)
+                    surface.SetDrawColor(enabled and COL_ACCENT or COL_BORDER)
+                    surface.DrawOutlinedRect(0, 0, w, h, 1)
+                    draw.SimpleText(text, "DermaDefault", w / 2, h / 2, enabled and COL_ACCENT or COL_TEXTPRI, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                end
+                btn.DoClick = function()
+                    local state = playerStates[id] or {}
+                    SetPlayerFlag(id, flag, not state[flag])
+                end
+            end
+
+            for _, ply in ipairs(players) do
+                local id = GetPlayerStateID(ply)
+                local row = scroll:Add("DPanel")
+                row:Dock(TOP)
+                row:DockMargin(0, 0, 0, 4)
+                row:SetTall(28)
+                row.Paint = function(self, w, h)
+                    draw.RoundedBox(4, 0, 0, w, h, COL_BTN)
+                    surface.SetDrawColor(COL_BORDER)
+                    surface.DrawOutlinedRect(0, 0, w, h, 1)
+                    local nameCol = COL_TEXTPRI
+                    if PlayerHasFlag(ply, "friend") then
+                        local c = PlayerESPColors.Friend.color
+                        nameCol = Color(c.r, c.g, c.b, 255)
+                    elseif PlayerHasFlag(ply, "enemy") then
+                        local c = PlayerESPColors.Enemy.color
+                        nameCol = Color(c.r, c.g, c.b, 255)
+                    end
+                    -- Show server nickname bold, then (Steam name) muted
+                    local nick      = ply:Nick()
+                    local steamName = ply.GetFriendName and ply:GetFriendName() or ""
+                    if steamName == "" or steamName == nick then
+                        steamName = ply:SteamID() or ""
+                    end
+                    draw.SimpleText(nick, "DermaDefaultBold", 8, h / 2, nameCol, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                    local nickW = surface.GetTextSize and (function()
+                        surface.SetFont("DermaDefaultBold")
+                        local tw = select(1, surface.GetTextSize(nick))
+                        return tw
+                    end)() or (#nick * 7)
+                    if steamName ~= "" then
+                        draw.SimpleText(" (" .. steamName .. ")", "DermaDefault", 8 + nickW, h / 2, COL_TEXTMUT, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                    end
+                end
+                AddStateButton(row, id, "friend", "Friend", pW - 212)
+                AddStateButton(row, id, "enemy", "Enemy", pW - 150)
+                AddStateButton(row, id, "watch", "Watch", pW - 88)
+            end
+
         elseif currentTab == "Config" then
 
             local y = 14
 
-            -- MENU KEYBIND
+            -- MENU KEYBINDS
             local hdr1 = vgui.Create("DLabel", panel)
             hdr1:SetPos(14, y) ; hdr1:SetFont("DermaDefaultBold")
-            hdr1:SetText("MENU KEYBIND") ; hdr1:SetTextColor(COL_ACCENT) ; hdr1:SizeToContents()
+            hdr1:SetText("MENU KEYBINDS") ; hdr1:SetTextColor(COL_ACCENT) ; hdr1:SizeToContents()
             y = y + 20
 
             local div1 = vgui.Create("DPanel", panel)
@@ -2077,8 +2252,13 @@ local function CreateKeroMenu()
             div1.Paint = function(s,w,h) surface.SetDrawColor(COL_BORDER) ; surface.DrawRect(0,0,w,h) end
             y = y + 10
 
+            -- ── Menu Key row ──────────────────────────────
+            local menuLbl = vgui.Create("DLabel", panel)
+            menuLbl:SetPos(14, y + 6) ; menuLbl:SetFont("DermaDefault")
+            menuLbl:SetText("Menu:") ; menuLbl:SetTextColor(COL_TEXTMUT) ; menuLbl:SizeToContents()
+
             local bindBtn = vgui.Create("DButton", panel)
-            bindBtn:SetPos(14, y) ; bindBtn:SetSize(160, 28) ; bindBtn:SetText("")
+            bindBtn:SetPos(56, y) ; bindBtn:SetSize(130, 26) ; bindBtn:SetText("")
             bindBtn.Paint = function(self, w, h)
                 local bg = bindListening and Color(130,45,45,255) or (self:IsHovered() and COL_BTNHOV or COL_BTN)
                 draw.RoundedBox(6, 0, 0, w, h, bg)
@@ -2087,7 +2267,7 @@ local function CreateKeroMenu()
                 local tc  = bindListening and Color(255,190,190,255) or COL_TEXTPRI
                 draw.SimpleText(txt,"DermaDefaultBold",w/2,h/2,tc,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
             end
-            bindBtn.DoClick = function() if not bindListening then bindListening = true end end
+            bindBtn.DoClick = function() if not bindListening then bindListening = true ; panicListening = false end end
 
             local thinkPnl = panel:Add("DPanel")
             thinkPnl:SetSize(0,0) ; thinkPnl.Paint = function() end
@@ -2105,15 +2285,75 @@ local function CreateKeroMenu()
                 end
             end
 
-            local resetBtn = vgui.Create("DButton", panel)
-            resetBtn:SetPos(182, y) ; resetBtn:SetSize(130, 28) ; resetBtn:SetText("")
-            resetBtn.Paint = function(self, w, h)
+            local resetMenuBtn = vgui.Create("DButton", panel)
+            resetMenuBtn:SetPos(194, y) ; resetMenuBtn:SetSize(110, 26) ; resetMenuBtn:SetText("")
+            resetMenuBtn.Paint = function(self, w, h)
                 draw.RoundedBox(6, 0, 0, w, h, self:IsHovered() and COL_BTNHOV or COL_BTN)
                 surface.SetDrawColor(COL_BORDER) ; surface.DrawOutlinedRect(0,0,w,h,1)
                 draw.SimpleText("Reset to INSERT","DermaDefault",w/2,h/2,COL_TEXTMUT,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
             end
-            resetBtn.DoClick = function() menuKey = KEY_INSERT ; menuKeyName = "INSERT" ; bindListening = false end
-            y = y + 40
+            resetMenuBtn.DoClick = function() menuKey = KEY_INSERT ; menuKeyName = "INSERT" ; bindListening = false end
+            y = y + 34
+
+            -- ── Panic Key row ─────────────────────────────
+            local panicLbl = vgui.Create("DLabel", panel)
+            panicLbl:SetPos(14, y + 6) ; panicLbl:SetFont("DermaDefault")
+            panicLbl:SetText("Panic:") ; panicLbl:SetTextColor(COL_TEXTMUT) ; panicLbl:SizeToContents()
+
+            local panicBtn = vgui.Create("DButton", panel)
+            panicBtn:SetPos(56, y) ; panicBtn:SetSize(130, 26) ; panicBtn:SetText("")
+            panicBtn.Paint = function(self, w, h)
+                local bg = panicListening and Color(130,45,45,255) or (self:IsHovered() and COL_BTNHOV or COL_BTN)
+                draw.RoundedBox(6, 0, 0, w, h, bg)
+                surface.SetDrawColor(panicMode and Color(200,80,30,200) or COL_BORDER)
+                surface.DrawOutlinedRect(0,0,w,h,1)
+                local txt = panicListening and "Press any key..." or (panicMode and ("PANIC: "..panicKeyName) or panicKeyName)
+                local tc  = panicListening and Color(255,190,190,255) or (panicMode and Color(255,160,80,255) or COL_TEXTPRI)
+                draw.SimpleText(txt,"DermaDefaultBold",w/2,h/2,tc,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+            end
+            panicBtn.DoClick = function() if not panicListening then panicListening = true ; bindListening = false end end
+
+            local panicThinkPnl = panel:Add("DPanel")
+            panicThinkPnl:SetSize(0,0) ; panicThinkPnl.Paint = function() end
+            panicThinkPnl.Think = function()
+                if not panicListening then return end
+                local ignore = {
+                    [KEY_LSHIFT]=true,[KEY_RSHIFT]=true,[KEY_LALT]=true,[KEY_RALT]=true,
+                    [KEY_LCONTROL]=true,[KEY_RCONTROL]=true,
+                }
+                for k = 0, 159 do
+                    if not ignore[k] and input.IsKeyDown(k) then
+                        panicKey = k ; panicKeyName = input.GetKeyName(k) or tostring(k)
+                        panicListening = false ; return
+                    end
+                end
+            end
+
+            local resetPanicBtn = vgui.Create("DButton", panel)
+            resetPanicBtn:SetPos(194, y) ; resetPanicBtn:SetSize(110, 26) ; resetPanicBtn:SetText("")
+            resetPanicBtn.Paint = function(self, w, h)
+                draw.RoundedBox(6, 0, 0, w, h, self:IsHovered() and COL_BTNHOV or COL_BTN)
+                surface.SetDrawColor(COL_BORDER) ; surface.DrawOutlinedRect(0,0,w,h,1)
+                draw.SimpleText("Clear","DermaDefault",w/2,h/2,COL_TEXTMUT,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+            end
+            resetPanicBtn.DoClick = function()
+                panicKey = nil ; panicKeyName = "NONE"
+                panicListening = false
+                -- If currently panicking, restore hooks
+                if panicMode then
+                    for name, data in pairs(_panicSavedHooks) do
+                        hook.Add(data.event, name, data.fn)
+                    end
+                    _panicSavedHooks = {}
+                    panicMode = false
+                end
+            end
+
+            -- Hint label
+            local panicHint = vgui.Create("DLabel", panel)
+            panicHint:SetPos(312, y + 6) ; panicHint:SetFont("DermaDefault")
+            panicHint:SetText("Hides all visuals without unloading") ; panicHint:SetTextColor(COL_TEXTMUT) ; panicHint:SizeToContents()
+            y = y + 34
 
             -- PROFILES
             local hdr2 = vgui.Create("DLabel", panel)
@@ -2229,6 +2469,21 @@ local function CreateKeroMenu()
                     if IsValid(keroFrame) then keroFrame:Remove() end
                     isMenuOpen = false
 
+                    -- Restore any NW strings that were blocked during this session
+                    if _G._KeroDebugState then
+                        local DS = _G._KeroDebugState
+                        for key, blocked in pairs(DS.nwBlocked) do
+                            if blocked then
+                                for _, ent in ipairs(player.GetAll()) do
+                                    if IsValid(ent) then
+                                        pcall(function() ent:SetNWString(key, nil) end)
+                                    end
+                                end
+                            end
+                        end
+                        DS.nwBlocked = {}
+                    end
+
                     -- Remove every hook we registered
                     local hookNames = {
                         "KeroAimbotKeyTrack",
@@ -2254,6 +2509,8 @@ local function CreateKeroMenu()
                         "KeroDrawSuitName",
                         "KeroDrawSuitHealth",
                         "KeroHitsound",
+                        "KeroFullbrightThink",
+                        "KeroFullbright",
                         "KeroFOVChange",
                         "KeroAspectRatio",
                     }
@@ -2275,6 +2532,10 @@ local function CreateKeroMenu()
                     render.SetColorModulation(1, 1, 1)
                     render.SetBlend(1)
                     render.MaterialOverride()
+                    -- Reset fullbright inline (ApplyFullbrightState is defined later in scope)
+                    RunConsoleCommand("r_shadows", "1")
+                    RunConsoleCommand("mat_fullbright", "0")
+                    keroFullbrightApplied = false
 
                     -- Nuke console so Kerosene output is cleared
                     NukeConsole()
@@ -2335,43 +2596,408 @@ local function CreateKeroMenu()
             suitHint:SetPos(222, y + 4) ; suitHint:SetFont("DermaDefault")
             suitHint:SetText("Filter ESP by suit (multi)")
             suitHint:SetTextColor(COL_TEXTMUT) ; suitHint:SizeToContents()
-        end
-    end -- UpdateContentPanel
 
-    -- Sidebar tab buttons
-    local TABS = { "Combat", "Visuals", "Misc", "Config" }
-    local function BuildSidebar()
-        buttonPanel:Clear()
-        local bW = SIDEBAR_W - 1
-        local bH = 36
-        for i, tabName in ipairs(TABS) do
-            local by = (i - 1) * (bH + 2) + 8
-            local btn = vgui.Create("DButton", buttonPanel)
-            btn:SetPos(0, by) ; btn:SetSize(bW, bH) ; btn:SetText("")
-            btn.Paint = function(self, w, h)
-                local active = (currentTab == tabName)
-                local hov    = self:IsHovered()
-                -- active: solid accent bar left + lighter bg
-                if active then
-                    draw.RoundedBoxEx(4, 0, 0, w, h, COL_BTNHOV, false, false, false, false)
-                    surface.SetDrawColor(COL_ACCENT)
-                    surface.DrawRect(0, 0, 2, h)
-                elseif hov then
-                    draw.RoundedBox(4, 0, 0, w, h, COL_BTN)
+        -- ══ DEBUG ═════════════════════════════════
+        elseif currentTab == "Debug" then
+
+            if not _G._KeroDebugState then
+                _G._KeroDebugState = {
+                    nwLog        = {},
+                    nwSeen       = {},
+                    nwBlocked    = {},
+                    hookScan     = {},
+                    hookScanned  = false,
+                    removedHooks = {},
+                }
+            end
+            local DS = _G._KeroDebugState
+
+            local function DebugHeader(parent, x, y2, w2, text)
+                local lbl = vgui.Create("DLabel", parent)
+                lbl:SetPos(x, y2) ; lbl:SetFont("DermaDefaultBold")
+                lbl:SetText(text) ; lbl:SetTextColor(COL_ACCENT) ; lbl:SizeToContents()
+                local div = vgui.Create("DPanel", parent)
+                div:SetPos(x, y2 + 16) ; div:SetSize(w2, 1)
+                div.Paint = function(s,w,h) surface.SetDrawColor(COL_BORDER) ; surface.DrawRect(0,0,w,h) end
+                return y2 + 22
+            end
+
+            local function DebugBtn(parent, x, y2, w, h, text, col, onClick)
+                local b = parent:Add("DButton")
+                b:SetPos(x, y2) ; b:SetSize(w, h) ; b:SetText("")
+                local bc = col or COL_BTN
+                b.Paint = function(self, bw, bh)
+                    local bg = self:IsHovered() and Color(math.min(bc.r+20,255), math.min(bc.g+20,255), math.min(bc.b+20,255), 255) or bc
+                    draw.RoundedBox(4, 0, 0, bw, bh, bg)
+                    surface.SetDrawColor(COL_BORDER) ; surface.DrawOutlinedRect(0,0,bw,bh,1)
+                    draw.SimpleText(text, "DermaDefault", bw/2, bh/2, COL_TEXTPRI, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
                 end
-                local tc = active and COL_TEXTPRI or (hov and COL_TEXTPRI or COL_TEXTMUT)
-                draw.SimpleText(tabName, "DermaDefault", 14, h/2, tc, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                b.DoClick = onClick
+                return b
             end
-            btn.DoClick = function()
-                if currentTab == tabName then return end
-                surface.PlaySound("buttons/lightswitch2.wav")
-                -- VFX: flash the content area; click sparks are emitted at the cursor.
-                _tabFlash = 1.0
-                tabFadeTarget = tabName
-                tabFading = true
+
+            local FULL_W    = pW - 16
+            local SECTION_X = 8
+            local PANEL_H   = panel:GetTall()
+            local TOP_H     = math.floor((PANEL_H - 16) * 0.52)
+            local BOT_Y     = TOP_H + 8
+            local BTN_W     = 46
+            local BTN_GAP   = 3
+
+            -- ════════════════════════════════════
+            --  TOP: NW String Logger
+            -- ════════════════════════════════════
+            local gy = 4
+            gy = DebugHeader(panel, SECTION_X, gy, FULL_W, "NW STRING LOGGER")
+
+            DebugBtn(panel, SECTION_X, gy, 72, 20, "Scan Now", COL_BTN, function()
+                DS.nwLog  = {}
+                DS.nwSeen = {}
+                for _, ply in ipairs(player.GetAll()) do
+                    if not IsValid(ply) then continue end
+                    local ok, vars = pcall(function() return ply:GetNetworkVars() end)
+                    if ok and istable(vars) then
+                        for k, v in pairs(vars) do
+                            local ukey = ply:SteamID64() .. "." .. tostring(k)
+                            if not DS.nwSeen[ukey] then
+                                DS.nwSeen[ukey] = true
+                                table.insert(DS.nwLog, { key=tostring(k), val=tostring(v), owner=ply:Nick(), time=os.date("%H:%M:%S") })
+                            end
+                        end
+                    end
+                    local knownKeys = { "ActiveSuit","SuitHealth","SuitMaxHealth","job","salary","rank","gang","gangrank","group","usergroup","rpname","rpjob","DarkRPVars" }
+                    for _, k in ipairs(knownKeys) do
+                        local sv = ply:GetNWString(k, "\0")
+                        if sv ~= "\0" then
+                            local ukey = ply:SteamID64() .. "." .. k
+                            if not DS.nwSeen[ukey] then
+                                DS.nwSeen[ukey] = true
+                                table.insert(DS.nwLog, { key=k, val=sv, owner=ply:Nick(), time=os.date("%H:%M:%S") })
+                            end
+                        end
+                    end
+                end
+                for _, ent in ipairs(ents.GetAll()) do
+                    if not IsValid(ent) or ent:IsPlayer() then continue end
+                    local ok2, vars2 = pcall(function() return ent:GetNetworkVars() end)
+                    if ok2 and istable(vars2) then
+                        for k, v in pairs(vars2) do
+                            local ukey = ent:GetClass().."["..ent:EntIndex().."]."..tostring(k)
+                            if not DS.nwSeen[ukey] then
+                                DS.nwSeen[ukey] = true
+                                table.insert(DS.nwLog, { key=tostring(k), val=tostring(v), owner=ent:GetClass().." #"..ent:EntIndex(), time=os.date("%H:%M:%S") })
+                            end
+                        end
+                    end
+                end
+            end)
+
+            DebugBtn(panel, SECTION_X + 78, gy, 52, 20, "Clear", Color(80,35,35,255), function()
+                DS.nwLog  = {}
+                DS.nwSeen = {}
+            end)
+
+            gy = gy + 26
+
+            local nwScroll = panel:Add("DScrollPanel")
+            nwScroll:SetPos(SECTION_X, gy) ; nwScroll:SetSize(FULL_W, TOP_H - gy - 2)
+            nwScroll:GetVBar():SetWide(4)
+            local nwVbar = nwScroll:GetVBar()
+            nwVbar.Paint         = function(s,w,h) draw.RoundedBox(2,0,0,w,h,COL_BTN) end
+            nwVbar.btnGrip.Paint = function(s,w,h) draw.RoundedBox(2,0,0,w,h,COL_ACCENT) end
+            nwVbar.btnUp.Paint   = function() end
+            nwVbar.btnDown.Paint = function() end
+
+            local nwLayout = nwScroll:Add("DListLayout")
+            local NW_ROW_W = FULL_W - 6
+            nwLayout:SetWide(NW_ROW_W)
+
+            local nwLastCount = -1
+            local nwThink = panel:Add("DPanel")
+            nwThink:SetSize(0,0) ; nwThink.Paint = function() end
+            nwThink.Think = function()
+                if #DS.nwLog == nwLastCount then return end
+                nwLastCount = #DS.nwLog
+                nwLayout:Clear()
+                for _, entry in ipairs(DS.nwLog) do
+                    local rowH = 36
+                    local row  = nwLayout:Add("DPanel")
+                    row:SetSize(NW_ROW_W, rowH)
+                    local isBlocked = DS.nwBlocked[entry.key] or false
+
+                    row.Paint = function(self, w, h)
+                        draw.RoundedBox(4, 0, 0, w, h, isBlocked and Color(50,20,20,200) or Color(20,21,24,200))
+                        surface.SetDrawColor(isBlocked and Color(120,40,40,255) or COL_BORDER)
+                        surface.DrawOutlinedRect(0,0,w,h,1)
+                        draw.SimpleText(entry.key, "DermaDefaultBold", 6, h/2 - 6, isBlocked and Color(180,60,60,255) or COL_ACCENT, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                        draw.SimpleText(entry.owner .. "  " .. entry.time, "DermaDefault", 6, h/2 + 4, COL_TEXTMUT, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                        local btnsW = (BTN_W + BTN_GAP) * 3 + 4
+                        local maxChars = math.floor((w - 140 - btnsW) / 6)
+                        local valStr = tostring(entry.val)
+                        if #valStr > maxChars then valStr = string.sub(valStr, 1, maxChars - 3) .. "..." end
+                        draw.SimpleText(valStr, "DermaDefault", 140, h/2 - 6, COL_TEXTPRI, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                    end
+
+                    local bY   = (rowH - 18) / 2
+                    local b3X  = NW_ROW_W - BTN_W - 2
+                    local b2X  = b3X - BTN_W - BTN_GAP
+                    local b1X  = b2X - BTN_W - BTN_GAP
+
+                    local copyBtn = row:Add("DButton")
+                    copyBtn:SetPos(b1X, bY) ; copyBtn:SetSize(BTN_W, 18) ; copyBtn:SetText("")
+                    copyBtn.Paint = function(self, w, h)
+                        draw.RoundedBox(3,0,0,w,h, self:IsHovered() and COL_BTNHOV or COL_BTN)
+                        surface.SetDrawColor(COL_BORDER) ; surface.DrawOutlinedRect(0,0,w,h,1)
+                        draw.SimpleText("Copy","DermaDefault",w/2,h/2,COL_TEXTPRI,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+                    end
+                    copyBtn.DoClick = function()
+                        SetClipboardText(entry.key .. " = " .. entry.val)
+                        surface.PlaySound("buttons/button14.wav")
+                    end
+
+                    local runBtn = row:Add("DButton")
+                    runBtn:SetPos(b2X, bY) ; runBtn:SetSize(BTN_W, 18) ; runBtn:SetText("")
+                    runBtn.Paint = function(self, w, h)
+                        draw.RoundedBox(3,0,0,w,h, self:IsHovered() and Color(30,60,30,255) or COL_BTN)
+                        surface.SetDrawColor(self:IsHovered() and Color(60,140,60,255) or COL_BORDER)
+                        surface.DrawOutlinedRect(0,0,w,h,1)
+                        draw.SimpleText("Run","DermaDefault",w/2,h/2, self:IsHovered() and Color(120,220,120,255) or COL_TEXTPRI, TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+                    end
+                    runBtn.DoClick = function()
+                        local fn, err = loadstring(entry.val)
+                        if fn then
+                            local ok2, runErr = pcall(fn)
+                            if not ok2 then
+                                chat.AddText(Color(220,80,80), "[Kero Debug] Run error: ", color_white, tostring(runErr))
+                            else
+                                chat.AddText(Color(80,200,80), "[Kero Debug] Ran: ", color_white, entry.key)
+                                surface.PlaySound("buttons/button14.wav")
+                            end
+                        else
+                            chat.AddText(Color(220,80,80), "[Kero Debug] Not runnable: ", color_white, tostring(err or "not valid Lua"))
+                        end
+                    end
+
+                    local blockBtn = row:Add("DButton")
+                    blockBtn:SetPos(b3X, bY) ; blockBtn:SetSize(BTN_W, 18) ; blockBtn:SetText("")
+                    blockBtn.Paint = function(self, w, h)
+                        local on = DS.nwBlocked[entry.key]
+                        draw.RoundedBox(3,0,0,w,h, on and Color(60,20,20,255) or (self:IsHovered() and COL_BTNHOV or COL_BTN))
+                        surface.SetDrawColor(on and Color(160,50,50,255) or COL_BORDER)
+                        surface.DrawOutlinedRect(0,0,w,h,1)
+                        draw.SimpleText(on and "Unblock" or "Block","DermaDefault",w/2,h/2, on and Color(220,100,100,255) or COL_TEXTPRI, TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+                    end
+                    blockBtn.DoClick = function()
+                        DS.nwBlocked[entry.key] = not DS.nwBlocked[entry.key]
+                        isBlocked = DS.nwBlocked[entry.key] or false
+                        if DS.nwBlocked[entry.key] then
+                            for _, ent in ipairs(player.GetAll()) do
+                                if IsValid(ent) then pcall(function() ent:SetNWString(entry.key, "") end) end
+                            end
+                        else
+                            for _, ent in ipairs(player.GetAll()) do
+                                if IsValid(ent) then pcall(function() ent:SetNWString(entry.key, entry.val) end) end
+                            end
+                        end
+                        surface.PlaySound("buttons/button15.wav")
+                        nwLastCount = -1
+                    end
+                end
             end
+
+            -- ════════════════════════════════════
+            --  BOTTOM: Hook Scanner
+            -- ════════════════════════════════════
+            local secDiv = panel:Add("DPanel")
+            secDiv:SetPos(SECTION_X, BOT_Y - 4) ; secDiv:SetSize(FULL_W, 1)
+            secDiv.Paint = function(s,w,h) surface.SetDrawColor(COL_BORDER) ; surface.DrawRect(0,0,w,h) end
+
+            local hy = BOT_Y + 2
+            hy = DebugHeader(panel, SECTION_X, hy, FULL_W, "SERVER HOOK SCANNER")
+
+            DebugBtn(panel, SECTION_X, hy, 72, 20, "Scan Hooks", COL_BTN, function()
+                DS.hookScan    = {}
+                DS.hookScanned = true
+                local hooktbl = hook.GetTable()
+                local serverIndicators = {
+                    "net","net_","ply","player","server","sv_","_sv",
+                    "darkrp","drp","pointshop","ps","ulx","ulib",
+                    "sam","fadmin","evolve","xadmin","serverguard",
+                    "bans","kick","mute","gag","jail",
+                    "log","logging","monitor","tracker","detect",
+                    "admin","staff","mod","sa","ga",
+                }
+                local knownKero = {
+                    KeroAimbotKeyTrack=true, KeroAimbotThink=true, ToggleKeroMenu=true,
+                    KeroPanicKeyThink=true, KeroFOVCircle=true, KeroHueAdvance=true,
+                    KeroDisplayNames=true, KeroDraw2DBoxes=true, KeroDrawMoney=true,
+                    KeroDrawWeapon=true, KeroDrawDistance=true, KeroDrawWorldESP=true,
+                    KeroWeaponChams=true, KeroArmChams=true, KeroNoRecoil=true,
+                    KeroNoSpread=true, KeroCameraAimbot=true, KeroCombatCheckShoot=true,
+                    KeroCombatCheckDamage=true, KeroCombatCheckHUD=true,
+                    KeroCombatCheckHPPoll=true, KeroDrawSuitName=true,
+                    KeroDrawSuitHealth=true, KeroHitsound=true, KeroFullbrightThink=true,
+                    KeroFullbright=true, KeroFOVChange=true, KeroAspectRatio=true,
+                    KeroWhitelistBoot=true,
+                }
+                for event, hooks in pairs(hooktbl) do
+                    for name, fn in pairs(hooks) do
+                        if knownKero[name] then continue end
+                        local info = debug and debug.getinfo and debug.getinfo(fn, "S")
+                        local src  = info and info.source or "?"
+                        local short = src:match("([^/\\]+)$") or src
+                        local suspicious = false
+                        local nameLow = string.lower(tostring(name))
+                        local srcLow  = string.lower(short)
+                        for _, ind in ipairs(serverIndicators) do
+                            if string.find(nameLow, ind, 1, true) or string.find(srcLow, ind, 1, true) then
+                                suspicious = true ; break
+                            end
+                        end
+                        table.insert(DS.hookScan, {
+                            event=event, name=tostring(name),
+                            source=short, suspicious=suspicious, fn=fn,
+                        })
+                    end
+                end
+                table.sort(DS.hookScan, function(a, b)
+                    if a.suspicious ~= b.suspicious then return a.suspicious end
+                    return a.event < b.event
+                end)
+            end)
+
+            DebugBtn(panel, SECTION_X + 78, hy, 52, 20, "Clear", Color(80,35,35,255), function()
+                DS.hookScan    = {}
+                DS.hookScanned = false
+            end)
+
+            hy = hy + 26
+
+            local hkScroll = panel:Add("DScrollPanel")
+            hkScroll:SetPos(SECTION_X, hy) ; hkScroll:SetSize(FULL_W, PANEL_H - hy - 4)
+            hkScroll:GetVBar():SetWide(4)
+            local hkVbar = hkScroll:GetVBar()
+            hkVbar.Paint         = function(s,w,h) draw.RoundedBox(2,0,0,w,h,COL_BTN) end
+            hkVbar.btnGrip.Paint = function(s,w,h) draw.RoundedBox(2,0,0,w,h,COL_ACCENT) end
+            hkVbar.btnUp.Paint   = function() end
+            hkVbar.btnDown.Paint = function() end
+
+            local hkLayout = hkScroll:Add("DListLayout")
+            local HK_ROW_W = FULL_W - 6
+            hkLayout:SetWide(HK_ROW_W)
+
+            local hkLastCount = -1
+            local hkThink = panel:Add("DPanel")
+            hkThink:SetSize(0,0) ; hkThink.Paint = function() end
+            hkThink.Think = function()
+                if #DS.hookScan == hkLastCount then return end
+                hkLastCount = #DS.hookScan
+                hkLayout:Clear()
+
+                if not DS.hookScanned then
+                    local ph = hkLayout:Add("DPanel")
+                    ph:SetSize(HK_ROW_W, 30)
+                    ph.Paint = function(self,w,h)
+                        draw.SimpleText("Press 'Scan Hooks' to analyse all active hooks.", "DermaDefault",
+                            w/2, h/2, COL_TEXTMUT, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                    end
+                    return
+                end
+
+                for _, entry in ipairs(DS.hookScan) do
+                    local rowH = 36
+                    local row  = hkLayout:Add("DPanel")
+                    row:SetSize(HK_ROW_W, rowH)
+                    row.Paint = function(self, w, h)
+                        draw.RoundedBox(4, 0, 0, w, h, entry.suspicious and Color(50,25,15,220) or Color(20,21,24,200))
+                        surface.SetDrawColor(entry.suspicious and Color(200,100,40,200) or COL_BORDER)
+                        surface.DrawOutlinedRect(0,0,w,h,1)
+                        if entry.suspicious then
+                            draw.RoundedBox(3, 110, (h-14)/2, 50, 14, Color(200,80,30,200))
+                            draw.SimpleText("SUSPECT","DermaDefault", 135, h/2, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                        end
+                        draw.SimpleText(entry.name, "DermaDefaultBold", 6, h/2 - 6, entry.suspicious and Color(230,150,60,255) or COL_TEXTPRI, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                        local meta = "Event: " .. entry.event .. "   Src: " .. (entry.source or "?")
+                        draw.SimpleText(meta, "DermaDefault", 6, h/2 + 4, COL_TEXTMUT, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                    end
+
+                    local bY2   = (rowH - 18) / 2
+                    local hkB2X = HK_ROW_W - BTN_W - 2
+                    local hkB1X = hkB2X - BTN_W - BTN_GAP
+
+                    local hkCopy = row:Add("DButton")
+                    hkCopy:SetPos(hkB1X, bY2) ; hkCopy:SetSize(BTN_W, 18) ; hkCopy:SetText("")
+                    hkCopy.Paint = function(self,w,h)
+                        draw.RoundedBox(3,0,0,w,h, self:IsHovered() and COL_BTNHOV or COL_BTN)
+                        surface.SetDrawColor(COL_BORDER) ; surface.DrawOutlinedRect(0,0,w,h,1)
+                        draw.SimpleText("Copy","DermaDefault",w/2,h/2,COL_TEXTPRI,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+                    end
+                    hkCopy.DoClick = function()
+                        SetClipboardText("[Hook] " .. entry.name .. " | " .. entry.event .. " | " .. (entry.source or "?"))
+                        surface.PlaySound("buttons/button14.wav")
+                    end
+
+                    local hkRemove = row:Add("DButton")
+                    hkRemove:SetPos(hkB2X, bY2) ; hkRemove:SetSize(BTN_W, 18) ; hkRemove:SetText("")
+                    hkRemove.Paint = function(self,w,h)
+                        draw.RoundedBox(3,0,0,w,h, self:IsHovered() and Color(100,35,35,255) or COL_BTN)
+                        surface.SetDrawColor(COL_BORDER) ; surface.DrawOutlinedRect(0,0,w,h,1)
+                        draw.SimpleText("Remove","DermaDefault",w/2,h/2, self:IsHovered() and Color(255,160,160,255) or COL_TEXTPRI, TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+                    end
+                    hkRemove.DoClick = function()
+                        table.insert(DS.removedHooks, { event=entry.event, name=entry.name, fn=entry.fn })
+                        hook.Remove(entry.event, entry.name)
+                        surface.PlaySound("buttons/button15.wav")
+                        for i2 = #DS.hookScan, 1, -1 do
+                            if DS.hookScan[i2].name == entry.name and DS.hookScan[i2].event == entry.event then
+                                table.remove(DS.hookScan, i2)
+                            end
+                        end
+                        hkLastCount = -1
+                    end
+                end
+            end
+        end
+end -- end UpdateContentPanel
+
+-- ════════════════════════════════════════════════
+--  Sidebar builder  (module-level)
+-- ════════════════════════════════════════════════
+BuildSidebar = function()
+    buttonPanel:Clear()
+    local bW = SIDEBAR_W - 1
+    local bH = 36
+    for i, tabName in ipairs(TABS) do
+        local by = (i - 1) * (bH + 2) + 8
+        local btn = vgui.Create("DButton", buttonPanel)
+        btn:SetPos(0, by) ; btn:SetSize(bW, bH) ; btn:SetText("")
+        btn.Paint = function(self, w, h)
+            local active = (currentTab == tabName)
+            local hov    = self:IsHovered()
+            if active then
+                draw.RoundedBoxEx(4, 0, 0, w, h, COL_BTNHOV, false, false, false, false)
+                surface.SetDrawColor(COL_ACCENT)
+                surface.DrawRect(0, 0, 2, h)
+            elseif hov then
+                draw.RoundedBox(4, 0, 0, w, h, COL_BTN)
+            end
+            local tc = active and COL_TEXTPRI or (hov and COL_TEXTPRI or COL_TEXTMUT)
+            draw.SimpleText(tabName, "DermaDefault", 14, h/2, tc, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        end
+        btn.DoClick = function()
+            if currentTab == tabName then return end
+            surface.PlaySound("buttons/lightswitch2.wav")
+            _tabFlash = 1.0
+            tabFadeTarget = tabName
+            tabFading = true
         end
     end
+end
+
+-- ════════════════════════════════════════════════
+--  Wire up sidebar + fade driver  (called at end of CreateKeroMenu)
+-- ════════════════════════════════════════════════
+WireKeroMenu = function()
     BuildSidebar()
 
     -- Tab-fade Think driver
@@ -2391,7 +3017,6 @@ local function CreateKeroMenu()
 
         if not IsValid(contentPanel) then return end
         if tabFading then
-            -- fade out
             tabAlpha = math.max(0, tabAlpha - 25)
             contentPanel:SetAlpha(tabAlpha)
             if tabAlpha == 0 and tabFadeTarget then
@@ -2402,13 +3027,10 @@ local function CreateKeroMenu()
                 tabFading = false
             end
         elseif tabAlpha < 255 then
-            -- fade in
             tabAlpha = math.min(255, tabAlpha + 25)
             contentPanel:SetAlpha(tabAlpha)
         end
     end
-
-    UpdateContentPanel(contentPanel)
 end
 
 -- ════════════════════════════════════════════════
@@ -2434,6 +3056,61 @@ hook.Add("Think", "ToggleKeroMenu", function()
     local down = input.IsKeyDown(menuKey)
     if down and not wasMenuKeyDown then ToggleKeroMenu() end
     wasMenuKeyDown = down
+end)
+
+-- Panic key: toggle visual suppression without unloading
+local wasPanicKeyDown = false
+local PANIC_VISUAL_HOOKS = {
+    "KeroDisplayNames", "KeroDraw2DBoxes", "KeroDrawMoney", "KeroDrawWeapon",
+    "KeroDrawDistance", "KeroDrawWorldESP", "KeroWeaponChams", "KeroArmChams",
+    "KeroNoRecoil", "KeroNoSpread", "KeroDrawSuitName", "KeroDrawSuitHealth",
+    "KeroHitsound", "KeroFullbrightThink", "KeroFullbright", "KeroFOVChange",
+    "KeroFOVCircle", "KeroHueAdvance", "KeroAspectRatio", "KeroCombatCheckHUD",
+}
+
+-- Store original hook functions so we can restore them
+local _panicSavedHooks = {}
+
+hook.Add("Think", "KeroPanicKeyThink", function()
+    if not panicKey then return end
+    if panicListening then wasPanicKeyDown = false ; return end
+    local down = input.IsKeyDown(panicKey)
+    if not down or wasPanicKeyDown then wasPanicKeyDown = down ; return end
+    wasPanicKeyDown = down
+
+    panicMode = not panicMode
+    local hooktbl = hook.GetTable()
+
+    if panicMode then
+        -- Save and remove all visual hooks
+        _panicSavedHooks = {}
+        for _, name in ipairs(PANIC_VISUAL_HOOKS) do
+            for event, hooks in pairs(hooktbl) do
+                if hooks[name] then
+                    _panicSavedHooks[name] = { event = event, fn = hooks[name] }
+                    hook.Remove(event, name)
+                end
+            end
+        end
+        -- Close menu if open so it's not visible
+        if isMenuOpen and IsValid(keroFrame) then
+            keroFrame:Remove()
+            isMenuOpen = false
+        end
+        -- Reset fullbright/fov
+        RunConsoleCommand("mat_fullbright", "0")
+        RunConsoleCommand("r_shadows", "1")
+        keroFullbrightApplied = false
+        render.SetColorModulation(1, 1, 1)
+        render.SetBlend(1)
+        render.MaterialOverride()
+    else
+        -- Restore saved visual hooks
+        for name, data in pairs(_panicSavedHooks) do
+            hook.Add(data.event, name, data.fn)
+        end
+        _panicSavedHooks = {}
+    end
 end)
 
 
@@ -2652,12 +3329,14 @@ local function GetBestTarget()
     local fovPx   = (options.Combat.CombatOption5 or 100) * 3.0
     local maxDist = options.Visuals.DisplayDistance or 5000
     local cx, cy  = ScrW() / 2, ScrH() / 2
-    local best, bestDist = nil, math.huge
+    local bestEnemy, bestEnemyDist = nil, math.huge
+    local bestNeutral, bestNeutralDist = nil, math.huge
 
     for _, ply in ipairs(player.GetAll()) do
         if ply == lp                            then continue end
         if not IsValid(ply) or not ply:Alive() then continue end
         if ply:GetMoveType() == MOVETYPE_NOCLIP then continue end
+        if PlayerHasFlag(ply, "friend")        then continue end
         if lp:GetPos():Distance(ply:GetPos()) > maxDist then continue end
         if not IsPlayerVisible(ply)             then continue end
 
@@ -2668,12 +3347,19 @@ local function GetBestTarget()
         local dx   = sp.x - cx
         local dy   = sp.y - cy
         local dist = math.sqrt(dx * dx + dy * dy)
-        if dist < fovPx and dist < bestDist then
-            bestDist = dist
-            best     = ply
+        if dist < fovPx then
+            if PlayerHasFlag(ply, "enemy") then
+                if dist < bestEnemyDist then
+                    bestEnemyDist = dist
+                    bestEnemy = ply
+                end
+            elseif dist < bestNeutralDist then
+                bestNeutralDist = dist
+                bestNeutral = ply
+            end
         end
     end
-    return best
+    return bestEnemy or bestNeutral
 end
 
 -- ── Camera aimbot state ────────────────────────────────────────────────
@@ -2880,7 +3566,7 @@ hook.Add("HUDPaint", "KeroDisplayNames", function()
             local name = (options.Visuals.NameType == "Steam Name") and ply:SteamName() or ply:Nick()
             local lx, ly, ha, va = ESPLabelPos(x1,y1,x2,y2, ESPArrangement.Name)
             local font   = ESPArrangement.Name.bold and "DermaDefaultBold" or "DermaDefault"
-            local col    = GetVisualColor("Name")
+            local col    = GetPlayerESPColor(ply, "Name")
             if ESPArrangement.Name.outline then
                 draw.SimpleTextOutlined(name, font, lx, ly, col, ha, va, 1, Color(0,0,0,200))
             else
@@ -2900,10 +3586,10 @@ hook.Add("HUDPaint", "KeroDraw2DBoxes", function()
     for _, ply in ipairs(player.GetAll()) do
         if ply:Alive() and ply ~= LocalPlayer() and IsPlayerWithinDisplayDistance(ply) and PassesSuitFilter(ply) then
             if use3D then
-                DrawBox3D(ply, GetVisualColor("Boxes"))
+                DrawBox3D(ply, GetPlayerESPColor(ply, "Boxes"))
             else
                 local x1,y1,x2,y2,vis = Get2DBounds(ply)
-                if vis then DrawBox2D(x1,y1,x2,y2, GetVisualColor("Boxes")) end
+                if vis then DrawBox2D(x1,y1,x2,y2, GetPlayerESPColor(ply, "Boxes")) end
             end
         end
     end
@@ -2937,7 +3623,7 @@ hook.Add("HUDPaint", "KeroDrawMoney", function()
             local money = ply:getDarkRPVar("money") or 0
             local lx, ly, ha, va = ESPLabelPos(x1,y1,x2,y2, ESPArrangement.Money)
             local font   = ESPArrangement.Money.bold and "DermaDefaultBold" or "DermaDefault"
-            local col    = GetVisualColor("Money")
+            local col    = GetPlayerESPColor(ply, "Money")
             if ESPArrangement.Money.outline then
                 draw.SimpleTextOutlined(FormatMoney(money), font, lx, ly, col, ha, va, 1, Color(0,0,0,200))
             else
@@ -2960,7 +3646,7 @@ hook.Add("HUDPaint", "KeroDrawWeapon", function()
             local wname = IsValid(wep) and string.gsub(wep:GetClass(),"weapon_","") or "None"
             local lx, ly, ha, va = ESPLabelPos(x1,y1,x2,y2, ESPArrangement.Weapon)
             local font   = ESPArrangement.Weapon.bold and "DermaDefaultBold" or "DermaDefault"
-            local col    = GetVisualColor("Weapon")
+            local col    = GetPlayerESPColor(ply, "Weapon")
             if ESPArrangement.Weapon.outline then
                 draw.SimpleTextOutlined(wname, font, lx, ly, col, ha, va, 1, Color(0,0,0,200))
             else
@@ -2982,7 +3668,7 @@ hook.Add("HUDPaint", "KeroDrawDistance", function()
             local dist = math.Round(LocalPlayer():GetPos():Distance(ply:GetPos()))
             local lx, ly, ha, va = ESPLabelPos(x1,y1,x2,y2, ESPArrangement.Distance)
             local font   = ESPArrangement.Distance.bold and "DermaDefaultBold" or "DermaDefault"
-            local col    = GetVisualColor("Distance")
+            local col    = GetPlayerESPColor(ply, "Distance")
             if ESPArrangement.Distance.outline then
                 draw.SimpleTextOutlined(dist.."m", font, lx, ly, col, ha, va, 1, Color(0,0,0,200))
             else
@@ -3111,6 +3797,35 @@ end)
 -- ════════════════════════════════════════════════
 --  FOV Changer
 -- ════════════════════════════════════════════════
+local keroFullbrightApplied = nil
+
+local function ApplyFullbrightState(enabled)
+    RunConsoleCommand("r_shadows", enabled and "0" or "1")
+    RunConsoleCommand("mat_fullbright", enabled and "1" or "0")
+end
+
+hook.Add("Think", "KeroFullbrightThink", function()
+    local enabled = options.Misc.Fullbright or false
+    if keroFullbrightApplied == enabled then return end
+    ApplyFullbrightState(enabled)
+    keroFullbrightApplied = enabled
+end)
+
+hook.Add("RenderScreenspaceEffects", "KeroFullbright", function()
+    if not options.Misc.Fullbright then return end
+    DrawColorModify({
+        ["$pp_colour_addr"] = 0,
+        ["$pp_colour_addg"] = 0,
+        ["$pp_colour_addb"] = 0,
+        ["$pp_colour_brightness"] = 0.08,
+        ["$pp_colour_contrast"] = 1.1,
+        ["$pp_colour_colour"] = 1.25,
+        ["$pp_colour_mulr"] = 0,
+        ["$pp_colour_mulg"] = 0,
+        ["$pp_colour_mulb"] = 0,
+    })
+end)
+
 hook.Add("CalcView", "KeroFOVChange", function(ply, origin, angles, fov)
     local custom = options.Misc.CustomFOV
     if not custom or custom == 0 then return end
@@ -3220,7 +3935,7 @@ hook.Add("HUDPaint", "KeroDrawSuitName", function()
         local arr  = ESPArrangement.SuitName
         local lx, ly, ha, va = ESPLabelPos(x1,y1,x2,y2, arr)
         local font = arr.bold and "DermaDefaultBold" or "DermaDefault"
-        local col  = GetVisualColor("SuitName")
+        local col  = GetPlayerESPColor(ply, "SuitName")
         if arr.outline then
             draw.SimpleTextOutlined(suitName, font, lx, ly, col, ha, va, 1, Color(0,0,0,200))
         else
@@ -3258,7 +3973,7 @@ hook.Add("HUDPaint", "KeroDrawSuitHealth", function()
         local arr  = ESPArrangement.SuitHealth
         local lx, ly, ha, va = ESPLabelPos(x1,y1,x2,y2, arr)
         local font = arr.bold and "DermaDefaultBold" or "DermaDefault"
-        local col  = GetVisualColor("SuitHealth")
+        local col  = GetPlayerESPColor(ply, "SuitHealth")
         if arr.outline then
             draw.SimpleTextOutlined(label, font, lx, ly, col, ha, va, 1, Color(0,0,0,200))
         else
@@ -3319,18 +4034,15 @@ local ccAttackerWeapon = {}   -- [targetEntIndex] = { nick, wname }
 
 hook.Add("Think", "KeroCombatCheckHPPoll", function()
     if not options.Misc.MiscOption5 then return end
-    if #combatCheckTargets == 0 then return end
+    MigrateLegacyCombatTargets()
+    RefreshCombatCheckTargets()
+    if table.Count(playerStates) == 0 then return end
 
     for _, ply in ipairs(player.GetAll()) do
         if not IsValid(ply) or ply == LocalPlayer() then continue end
+        if not PlayerHasFlag(ply, "watch") then continue end
 
         local nick = ply:Nick()
-        local matched = false
-        for _, t in ipairs(combatCheckTargets) do
-            if string.lower(nick) == string.lower(t) then matched = true ; break end
-        end
-        if not matched then continue end
-
         local hp = ply:Health()
         local id = ply:EntIndex()
 
@@ -3362,35 +4074,25 @@ end)
 -- can attribute incoming damage correctly.
 hook.Add("EntityFireBullets", "KeroCombatCheckShoot", function(ent, data)
     if not options.Misc.MiscOption5 then return end
-    if #combatCheckTargets == 0 then return end
+    MigrateLegacyCombatTargets()
+    RefreshCombatCheckTargets()
+    if table.Count(playerStates) == 0 then return end
     if not IsValid(ent) or not ent:IsPlayer() then return end
 
     local shooterNick = ent:Nick()
     local wep   = ent:GetActiveWeapon()
     local wname = IsValid(wep) and FriendlyWeaponName(wep:GetClass()) or "Unknown"
 
-    -- Check if the shooter IS a watched target (they fired)
-    local shooterIsTarget = false
-    for _, t in ipairs(combatCheckTargets) do
-        if string.lower(shooterNick) == string.lower(t) then
-            shooterIsTarget = true
-            KeroNotify(shooterNick .. " fired " .. wname, "shoot")
-            break
-        end
+    local shooterIsTarget = PlayerHasFlag(ent, "watch")
+    if shooterIsTarget then
+        KeroNotify(shooterNick .. " fired " .. wname, "shoot")
     end
 
-    -- If the shooter is NOT a target, record them as a potential attacker
-    -- against every watched target (we can't know who they aimed at client-side)
     if not shooterIsTarget then
         for _, targetPly in ipairs(player.GetAll()) do
             if not IsValid(targetPly) then continue end
-            local tNick = targetPly:Nick()
-            for _, t in ipairs(combatCheckTargets) do
-                if string.lower(tNick) == string.lower(t) then
-                    ccAttackerWeapon[targetPly:EntIndex()] = { nick = shooterNick, wname = wname }
-                    break
-                end
-            end
+            if not PlayerHasFlag(targetPly, "watch") then continue end
+            ccAttackerWeapon[targetPly:EntIndex()] = { nick = shooterNick, wname = wname }
         end
     end
 end)
