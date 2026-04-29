@@ -1,9 +1,9 @@
 -- ═══════════════════════════════════════════════
---  Kerosene | V1.41  by Wobble
+--  Kerosene | V1.57  by Wobble
 -- ═══════════════════════════════════════════════
 
 -- ── Menu state ────────────────────────────────
-local KERO_VERSION = "v1.41"
+local KERO_VERSION = "v1.57"
 
 local KERO_WHITELIST = {
     url = "https://github.com/rilly321/whitelist/blob/main/whitelist.txt",
@@ -112,6 +112,8 @@ end
 
 local function BootKerosene()
 
+local KeroAntiSpyApply  -- forward declaration; defined near bottom of BootKerosene
+
 local isMenuOpen    = false
 local keroFrame = nil
 local currentTab    = "Combat"
@@ -179,9 +181,10 @@ local VisualColors = {
 
 -- Misc HUD colour state
 local MiscColors = {
-    ArmChams    = { color = Color(255, 100, 100, 255), rainbow = false },
-    WeaponChams = { color = Color(100, 200, 255, 255), rainbow = false },
-    CombatCheck = { color = Color(220, 100,  80, 255), rainbow = false },
+    ArmChams       = { color = Color(255, 100, 100, 255), rainbow = false },
+    WeaponChams    = { color = Color(100, 200, 255, 255), rainbow = false },
+    CombatCheck    = { color = Color(220, 100,  80, 255), rainbow = false },
+    TargetHighlight= { color = Color(255,  60,  60, 200), rainbow = false },
 }
 
 local PlayerESPColors = {
@@ -378,7 +381,18 @@ local function GetMiscColor(key, alpha)
     return Color(c.r, c.g, c.b, alpha or c.a)
 end
 
+-- Forward-declared here; updated each frame by KeroTargetHighlight hook
+local _targetHighlightTarget = nil
+
 local function GetPlayerESPColor(ply, key)
+    -- If target highlight is on and this player is the current target, tint all ESP
+    if options.Combat and options.Combat.TargetHighlight
+    and IsValid(_targetHighlightTarget) and _targetHighlightTarget == ply then
+        local col = MiscColors.TargetHighlight.rainbow
+            and RainbowColor(visualHue, 230)
+            or  MiscColors.TargetHighlight.color
+        return Color(col.r, col.g, col.b, col.a or 230)
+    end
     local base = GetVisualColor(key)
     if PlayerHasFlag(ply, "friend") then
         local c = PlayerESPColors.Friend.color
@@ -1693,10 +1707,10 @@ UpdateContentPanel = function(panel)
         if currentTab == "Combat" then
 
             local aimbotBtn  = CreateToggleButton(panel, "Aimbot",   10,  10, "CombatOption1", "Combat")
-            local drawFovBtn = CreateToggleButton(panel, "Draw FOV", 215, 10, "CombatOption4", "Combat")
+            local drawFovBtn = CreateToggleButton(panel, "Draw FOV", 255, 10, "CombatOption4", "Combat")
 
             -- FOV slider is ALWAYS visible — draw fov only controls whether circle renders
-            local fovSizeSlider = CreateSlider(panel, "FOV Size", 183, 38, "CombatOption5", "Combat", 5, 180)
+            local fovSizeSlider = CreateSlider(panel, "FOV Size", 222, 38, "CombatOption5", "Combat", 5, 180)
 
             -- Custom themed FOV colour swatch + rainbow, placed to the right of Draw FOV toggle
             if not options.Combat.FOVColorData then
@@ -1704,18 +1718,34 @@ UpdateContentPanel = function(panel)
             end
             local fovColorData = options.Combat.FOVColorData
 
-            local fovColorBtn = MakeColorButton(panel, 408, 13,
+            local fovColorBtn = MakeColorButton(panel, 461, 13,
                 function() return fovColorData.color end,
                 function(c) fovColorData.color = c ; options.Combat.FOVColor = c end)
 
-            local fovRainbowBtn = MakeRainbowButton(panel, 434, 13,
+            local fovRainbowBtn = MakeRainbowButton(panel, 483, 13,
                 function() return fovColorData.rainbow end,
                 function(v) fovColorData.rainbow = v end)
 
-            -- Remove Recoil and Remove Spread sit below Draw FOV + size slider
-            local removeRecoilBtn = CreateToggleButton(panel, "Remove Recoil", 215, 66, "MiscOption1", "Misc")
+            -- ── Target Highlight ───────────────────────
+            if not options.Combat.TargetHighlightData then
+                options.Combat.TargetHighlightData = { color = MiscColors.TargetHighlight.color, rainbow = false }
+            end
+            local thData = options.Combat.TargetHighlightData
+
+            local targetHLBtn = CreateToggleButton(panel, "Target Highlight", 255, 66, "TargetHighlight", "Combat")
+
+            local thColorBtn = MakeColorButton(panel, 461, 69,
+                function() return thData.color end,
+                function(c) thData.color = c ; MiscColors.TargetHighlight.color = c end)
+
+            local thRainbowBtn = MakeRainbowButton(panel, 483, 69,
+                function() return thData.rainbow end,
+                function(v) thData.rainbow = v ; MiscColors.TargetHighlight.rainbow = v end)
+
+            -- Remove Recoil and Remove Spread sit below Target Highlight
+            local removeRecoilBtn = CreateToggleButton(panel, "Remove Recoil", 255, 96, "MiscOption1", "Misc")
             removeRecoilBtn:SetVisible(true)
-            local removeSpreadBtn = CreateToggleButton(panel, "Remove Spread",  215, 96, "MiscOption2", "Misc")
+            local removeSpreadBtn = CreateToggleButton(panel, "Remove Spread",  255, 126, "MiscOption2", "Misc")
             removeSpreadBtn:SetVisible(true)
 
             drawFovBtn.OnToggled = function(self, state)
@@ -1727,6 +1757,9 @@ UpdateContentPanel = function(panel)
 
             local smoothingSlider = CreateSlider(panel, "Smoothing", -13, 128, "CombatOption3", "Combat", 0, 100)
             smoothingSlider:SetVisible(aimbotBtn.isChecked and options.Combat.CameraSilentMode == "Camera")
+
+            local wiggleSlider = CreateSlider(panel, "Lock Wiggle", -8, 155, "LockWiggle", "Combat", 0, 100)
+            wiggleSlider:SetVisible(aimbotBtn.isChecked)
 
             local methodDD = MakeThemedDropdown(panel, 10, 68, 140,
                 {"Camera", "Silent"},
@@ -1798,6 +1831,7 @@ UpdateContentPanel = function(panel)
             aimbotBtn.OnToggled = function(self, state)
                 methodDD:SetVisible(state) ; bodyDD:SetVisible(state)
                 keybindButton:SetVisible(state)
+                wiggleSlider:SetVisible(state)
                 local mode = options.Combat.CameraSilentMode
                 hitChanceSlider:SetVisible(state and mode == "Silent")
                 smoothingSlider:SetVisible(state and mode == "Camera")
@@ -2114,6 +2148,14 @@ UpdateContentPanel = function(panel)
             end
             y = y + 30
 
+            -- ── Anti-Spy ────────────────────────
+            local antiSpyBtn = CreateToggleButton(panel, "Anti-Spy", 10, y, "AntiSpy", "Misc")
+            antiSpyBtn.OnToggled = function(self, state)
+                options.Misc.AntiSpy = state
+                KeroAntiSpyApply(state)
+            end
+            y = y + 30
+
             -- ── Remove Camo ─────────────────────
             local fullbrightBtn = CreateToggleButton(panel, "Fullbright", 10, y, "Fullbright", "Misc")
             y = y + 30
@@ -2352,8 +2394,76 @@ UpdateContentPanel = function(panel)
             -- Hint label
             local panicHint = vgui.Create("DLabel", panel)
             panicHint:SetPos(312, y + 6) ; panicHint:SetFont("DermaDefault")
-            panicHint:SetText("Hides all visuals without unloading") ; panicHint:SetTextColor(COL_TEXTMUT) ; panicHint:SizeToContents()
+            panicHint:SetText("") ; panicHint:SetTextColor(COL_TEXTMUT) ; panicHint:SizeToContents()
             y = y + 34
+
+            -- FREECAM
+            local hdrFC = vgui.Create("DLabel", panel)
+            hdrFC:SetPos(14, y) ; hdrFC:SetFont("DermaDefaultBold")
+            hdrFC:SetText("FREECAM") ; hdrFC:SetTextColor(COL_ACCENT) ; hdrFC:SizeToContents()
+            y = y + 20
+
+            local divFC = vgui.Create("DPanel", panel)
+            divFC:SetPos(14, y) ; divFC:SetSize(pW - 28, 1)
+            divFC.Paint = function(s,w,h) surface.SetDrawColor(COL_BORDER) ; surface.DrawRect(0,0,w,h) end
+            y = y + 10
+
+            -- Freecam key bind — same style as Menu and Panic binds
+            local freecamLbl = vgui.Create("DLabel", panel)
+            freecamLbl:SetPos(14, y + 6) ; freecamLbl:SetFont("DermaDefault")
+            freecamLbl:SetText("Freecam:") ; freecamLbl:SetTextColor(COL_TEXTMUT) ; freecamLbl:SizeToContents()
+
+            local freecamBtn = vgui.Create("DButton", panel)
+            freecamBtn:SetPos(74, y) ; freecamBtn:SetSize(130, 26) ; freecamBtn:SetText("")
+            freecamBtn.Paint = function(self, w, h)
+                local listening = options.Config._freecamListening
+                local bg = listening and Color(130,45,45,255) or (self:IsHovered() and COL_BTNHOV or COL_BTN)
+                draw.RoundedBox(6, 0, 0, w, h, bg)
+                surface.SetDrawColor(COL_BORDER) ; surface.DrawOutlinedRect(0,0,w,h,1)
+                local keyName = options.Config.FreecamKeyName or "NONE"
+                local txt = listening and "Press any key..." or keyName
+                local tc  = listening and Color(255,190,190,255) or COL_TEXTPRI
+                draw.SimpleText(txt,"DermaDefaultBold",w/2,h/2,tc,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+            end
+            freecamBtn.DoClick = function()
+                options.Config._freecamListening = not options.Config._freecamListening
+            end
+
+            local freecamThinkPnl = panel:Add("DPanel")
+            freecamThinkPnl:SetSize(0,0) ; freecamThinkPnl.Paint = function() end
+            freecamThinkPnl.Think = function()
+                if not options.Config._freecamListening then return end
+                local ignore = {
+                    [KEY_LSHIFT]=true,[KEY_RSHIFT]=true,[KEY_LALT]=true,[KEY_RALT]=true,
+                    [KEY_LCONTROL]=true,[KEY_RCONTROL]=true,
+                }
+                for k = 0, 159 do
+                    if not ignore[k] and input.IsKeyDown(k) then
+                        options.Config.FreecamKey = k
+                        options.Config.FreecamKeyName = input.GetKeyName(k) or tostring(k)
+                        options.Config._freecamListening = false
+                        return
+                    end
+                end
+            end
+
+            local resetFreecamBtn = vgui.Create("DButton", panel)
+            resetFreecamBtn:SetPos(212, y) ; resetFreecamBtn:SetSize(90, 26) ; resetFreecamBtn:SetText("")
+            resetFreecamBtn.Paint = function(self, w, h)
+                draw.RoundedBox(6, 0, 0, w, h, self:IsHovered() and COL_BTNHOV or COL_BTN)
+                surface.SetDrawColor(COL_BORDER) ; surface.DrawOutlinedRect(0,0,w,h,1)
+                draw.SimpleText("Clear","DermaDefault",w/2,h/2,COL_TEXTMUT,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+            end
+            resetFreecamBtn.DoClick = function()
+                options.Config.FreecamKey = nil
+                options.Config.FreecamKeyName = "NONE"
+                options.Config._freecamListening = false
+            end
+
+            local freecamHint = vgui.Create("DLabel", panel)
+            freecamHint:SetPos(310, y + 6) ; freecamHint:SetFont("DermaDefault")
+            freecamHint:SetText("") ; freecamHint:SetTextColor(COL_TEXTMUT) ; freecamHint:SizeToContents()
+            y = y + 33
 
             -- PROFILES
             local hdr2 = vgui.Create("DLabel", panel)
@@ -2513,6 +2623,12 @@ UpdateContentPanel = function(panel)
                         "KeroFullbright",
                         "KeroFOVChange",
                         "KeroAspectRatio",
+                        "KeroTargetHighlight",
+                        "KeroAntiSpyHUD",
+                        "KeroFreecamKeyThink",
+                        "KeroFreecam",
+                        "KeroFreecamMove",
+                        "KeroFreecamFreeze",
                     }
                     for _, name in ipairs(hookNames) do
                         hook.Remove("Think",                    name)
@@ -2546,56 +2662,6 @@ UpdateContentPanel = function(panel)
             end)
 
             y = y + 44
-
-            -- TARGETED SUITS
-            local hdr3 = vgui.Create("DLabel", panel)
-            hdr3:SetPos(14, y) ; hdr3:SetFont("DermaDefaultBold")
-            hdr3:SetText("TARGETED SUITS") ; hdr3:SetTextColor(COL_ACCENT) ; hdr3:SizeToContents()
-            y = y + 20
-
-            local div3 = vgui.Create("DPanel", panel)
-            div3:SetPos(14, y) ; div3:SetSize(pW - 28, 1)
-            div3.Paint = function(s,w,h) surface.SetDrawColor(COL_BORDER) ; surface.DrawRect(0,0,w,h) end
-            y = y + 10
-
-            -- Build a selectedDisplayNames table synced to targetedSuitFilters
-            local selectedDisplayNames = {}
-            for _, actual in ipairs(targetedSuitFilters) do
-                for disp, act in pairs(SUIT_ACTUAL) do
-                    if act == actual then
-                        table.insert(selectedDisplayNames, disp)
-                        break
-                    end
-                end
-            end
-
-            local suitChoices = {}
-            for _, disp in ipairs(SUIT_DISPLAY) do table.insert(suitChoices, disp) end
-
-            local function SuitLabel()
-                if #selectedDisplayNames == 0 then return "All Suits" end
-                if #selectedDisplayNames == 1 then return selectedDisplayNames[1] end
-                return selectedDisplayNames[1] .. " (+" .. (#selectedDisplayNames - 1) .. ")"
-            end
-
-            MakeMultiSelectDropdown(panel, 14, y, 200,
-                suitChoices,
-                selectedDisplayNames,
-                function(val, nowSelected)
-                    -- Rebuild targetedSuitFilters from selectedDisplayNames
-                    targetedSuitFilters = {}
-                    for _, disp in ipairs(selectedDisplayNames) do
-                        local actual = SUIT_ACTUAL[disp]
-                        if actual then table.insert(targetedSuitFilters, actual) end
-                    end
-                    -- Ensure PassesSuitFilter uses the updated list immediately
-                end,
-                SuitLabel)
-
-            local suitHint = vgui.Create("DLabel", panel)
-            suitHint:SetPos(222, y + 4) ; suitHint:SetFont("DermaDefault")
-            suitHint:SetText("Filter ESP by suit (multi)")
-            suitHint:SetTextColor(COL_TEXTMUT) ; suitHint:SizeToContents()
 
         -- ══ DEBUG ═════════════════════════════════
         elseif currentTab == "Debug" then
@@ -2636,21 +2702,8 @@ UpdateContentPanel = function(panel)
                 return b
             end
 
-            local FULL_W    = pW - 16
-            local SECTION_X = 8
-            local PANEL_H   = panel:GetTall()
-            local TOP_H     = math.floor((PANEL_H - 16) * 0.52)
-            local BOT_Y     = TOP_H + 8
-            local BTN_W     = 46
-            local BTN_GAP   = 3
-
-            -- ════════════════════════════════════
-            --  TOP: NW String Logger
-            -- ════════════════════════════════════
-            local gy = 4
-            gy = DebugHeader(panel, SECTION_X, gy, FULL_W, "NW STRING LOGGER")
-
-            DebugBtn(panel, SECTION_X, gy, 72, 20, "Scan Now", COL_BTN, function()
+            -- ── Helper: run NW string scan ─────────────
+            local function RunNWScan()
                 DS.nwLog  = {}
                 DS.nwSeen = {}
                 for _, ply in ipairs(player.GetAll()) do
@@ -2690,14 +2743,82 @@ UpdateContentPanel = function(panel)
                         end
                     end
                 end
-            end)
+            end
 
-            DebugBtn(panel, SECTION_X + 78, gy, 52, 20, "Clear", Color(80,35,35,255), function()
-                DS.nwLog  = {}
-                DS.nwSeen = {}
-            end)
+            -- ── Helper: run Hook scan ──────────────────
+            local function RunHookScan()
+                DS.hookScan    = {}
+                DS.hookScanned = true
+                local hooktbl = hook.GetTable()
+                local serverIndicators = {
+                    "net","net_","ply","player","server","sv_","_sv",
+                    "darkrp","drp","pointshop","ps","ulx","ulib",
+                    "sam","fadmin","evolve","xadmin","serverguard",
+                    "bans","kick","mute","gag","jail",
+                    "log","logging","monitor","tracker","detect",
+                    "admin","staff","mod","sa","ga",
+                }
+                local knownKero = {
+                    KeroAimbotKeyTrack=true, KeroAimbotThink=true, ToggleKeroMenu=true,
+                    KeroPanicKeyThink=true, KeroFOVCircle=true, KeroHueAdvance=true,
+                    KeroDisplayNames=true, KeroDraw2DBoxes=true, KeroDrawMoney=true,
+                    KeroDrawWeapon=true, KeroDrawDistance=true, KeroDrawWorldESP=true,
+                    KeroWeaponChams=true, KeroArmChams=true, KeroNoRecoil=true,
+                    KeroNoSpread=true, KeroCameraAimbot=true, KeroCombatCheckShoot=true,
+                    KeroCombatCheckDamage=true, KeroCombatCheckHUD=true,
+                    KeroCombatCheckHPPoll=true, KeroDrawSuitName=true,
+                    KeroDrawSuitHealth=true, KeroHitsound=true, KeroFullbrightThink=true,
+                    KeroFullbright=true, KeroFOVChange=true, KeroAspectRatio=true,
+                    KeroWhitelistBoot=true, KeroTargetHighlight=true,
+                }
+                for event, hooks in pairs(hooktbl) do
+                    for name, fn in pairs(hooks) do
+                        if knownKero[name] then continue end
+                        local info = debug and debug.getinfo and debug.getinfo(fn, "S")
+                        local src  = info and info.source or "?"
+                        local short = src:match("([^/\\]+)$") or src
+                        local suspicious = false
+                        local nameLow = string.lower(tostring(name))
+                        local srcLow  = string.lower(short)
+                        for _, ind in ipairs(serverIndicators) do
+                            if string.find(nameLow, ind, 1, true) or string.find(srcLow, ind, 1, true) then
+                                suspicious = true ; break
+                            end
+                        end
+                        table.insert(DS.hookScan, {
+                            event=event, name=tostring(name),
+                            source=short, suspicious=suspicious, fn=fn,
+                        })
+                    end
+                end
+                table.sort(DS.hookScan, function(a, b)
+                    if a.suspicious ~= b.suspicious then return a.suspicious end
+                    return a.event < b.event
+                end)
+            end
 
-            gy = gy + 26
+            -- Auto-scan both on tab open, clear old data first
+            DS.nwLog  = {} ; DS.nwSeen = {}
+            RunNWScan()
+            RunHookScan()
+
+            local FULL_W    = pW - 16
+            local SECTION_X = 8
+            local PANEL_H   = panel:GetTall()
+            local TOP_H     = math.floor((PANEL_H - 16) * 0.52)
+            local BOT_Y     = TOP_H + 8
+            local BTN_W     = 46
+            local BTN_GAP   = 3
+
+            -- ════════════════════════════════════
+            --  TOP: NW String Logger
+            -- ════════════════════════════════════
+            local gy = 4
+            gy = DebugHeader(panel, SECTION_X, gy, FULL_W, "NW STRING LOGGER")
+
+            -- Only a Clear button remains; scan runs automatically on open
+
+            gy = gy + 4
 
             local nwScroll = panel:Add("DScrollPanel")
             nwScroll:SetPos(SECTION_X, gy) ; nwScroll:SetSize(FULL_W, TOP_H - gy - 2)
@@ -2815,63 +2936,9 @@ UpdateContentPanel = function(panel)
             local hy = BOT_Y + 2
             hy = DebugHeader(panel, SECTION_X, hy, FULL_W, "SERVER HOOK SCANNER")
 
-            DebugBtn(panel, SECTION_X, hy, 72, 20, "Scan Hooks", COL_BTN, function()
-                DS.hookScan    = {}
-                DS.hookScanned = true
-                local hooktbl = hook.GetTable()
-                local serverIndicators = {
-                    "net","net_","ply","player","server","sv_","_sv",
-                    "darkrp","drp","pointshop","ps","ulx","ulib",
-                    "sam","fadmin","evolve","xadmin","serverguard",
-                    "bans","kick","mute","gag","jail",
-                    "log","logging","monitor","tracker","detect",
-                    "admin","staff","mod","sa","ga",
-                }
-                local knownKero = {
-                    KeroAimbotKeyTrack=true, KeroAimbotThink=true, ToggleKeroMenu=true,
-                    KeroPanicKeyThink=true, KeroFOVCircle=true, KeroHueAdvance=true,
-                    KeroDisplayNames=true, KeroDraw2DBoxes=true, KeroDrawMoney=true,
-                    KeroDrawWeapon=true, KeroDrawDistance=true, KeroDrawWorldESP=true,
-                    KeroWeaponChams=true, KeroArmChams=true, KeroNoRecoil=true,
-                    KeroNoSpread=true, KeroCameraAimbot=true, KeroCombatCheckShoot=true,
-                    KeroCombatCheckDamage=true, KeroCombatCheckHUD=true,
-                    KeroCombatCheckHPPoll=true, KeroDrawSuitName=true,
-                    KeroDrawSuitHealth=true, KeroHitsound=true, KeroFullbrightThink=true,
-                    KeroFullbright=true, KeroFOVChange=true, KeroAspectRatio=true,
-                    KeroWhitelistBoot=true,
-                }
-                for event, hooks in pairs(hooktbl) do
-                    for name, fn in pairs(hooks) do
-                        if knownKero[name] then continue end
-                        local info = debug and debug.getinfo and debug.getinfo(fn, "S")
-                        local src  = info and info.source or "?"
-                        local short = src:match("([^/\\]+)$") or src
-                        local suspicious = false
-                        local nameLow = string.lower(tostring(name))
-                        local srcLow  = string.lower(short)
-                        for _, ind in ipairs(serverIndicators) do
-                            if string.find(nameLow, ind, 1, true) or string.find(srcLow, ind, 1, true) then
-                                suspicious = true ; break
-                            end
-                        end
-                        table.insert(DS.hookScan, {
-                            event=event, name=tostring(name),
-                            source=short, suspicious=suspicious, fn=fn,
-                        })
-                    end
-                end
-                table.sort(DS.hookScan, function(a, b)
-                    if a.suspicious ~= b.suspicious then return a.suspicious end
-                    return a.event < b.event
-                end)
-            end)
+            -- Only a Clear button remains; scan runs automatically on open
 
-            DebugBtn(panel, SECTION_X + 78, hy, 52, 20, "Clear", Color(80,35,35,255), function()
-                DS.hookScan    = {}
-                DS.hookScanned = false
-            end)
-
-            hy = hy + 26
+            hy = hy + 4
 
             local hkScroll = panel:Add("DScrollPanel")
             hkScroll:SetPos(SECTION_X, hy) ; hkScroll:SetSize(FULL_W, PANEL_H - hy - 4)
@@ -2898,7 +2965,7 @@ UpdateContentPanel = function(panel)
                     local ph = hkLayout:Add("DPanel")
                     ph:SetSize(HK_ROW_W, 30)
                     ph.Paint = function(self,w,h)
-                        draw.SimpleText("Press 'Scan Hooks' to analyse all active hooks.", "DermaDefault",
+                        draw.SimpleText("No hooks scanned yet.", "DermaDefault",
                             w/2, h/2, COL_TEXTMUT, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
                     end
                     return
@@ -2912,21 +2979,29 @@ UpdateContentPanel = function(panel)
                         draw.RoundedBox(4, 0, 0, w, h, entry.suspicious and Color(50,25,15,220) or Color(20,21,24,200))
                         surface.SetDrawColor(entry.suspicious and Color(200,100,40,200) or COL_BORDER)
                         surface.DrawOutlinedRect(0,0,w,h,1)
-                        if entry.suspicious then
-                            draw.RoundedBox(3, 110, (h-14)/2, 50, 14, Color(200,80,30,200))
-                            draw.SimpleText("SUSPECT","DermaDefault", 135, h/2, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-                        end
                         draw.SimpleText(entry.name, "DermaDefaultBold", 6, h/2 - 6, entry.suspicious and Color(230,150,60,255) or COL_TEXTPRI, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
                         local meta = "Event: " .. entry.event .. "   Src: " .. (entry.source or "?")
                         draw.SimpleText(meta, "DermaDefault", 6, h/2 + 4, COL_TEXTMUT, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
                     end
 
-                    local bY2   = (rowH - 18) / 2
-                    local hkB2X = HK_ROW_W - BTN_W - 2
-                    local hkB1X = hkB2X - BTN_W - BTN_GAP
+                    local bY2    = (rowH - 18) / 2
+                    -- Layout: [Remove] at far right, [Copy] left of it, [SUSPECT badge] left of Copy (only if suspicious)
+                    local hkRemX = HK_ROW_W - BTN_W - 2
+                    local hkCpX  = hkRemX - BTN_W - BTN_GAP
+                    local hkSqX  = hkCpX  - 54   - BTN_GAP  -- SUSPECT badge width ~54
+
+                    -- SUSPECT badge — shown inline next to Copy, only when flagged
+                    if entry.suspicious then
+                        local susp = row:Add("DPanel")
+                        susp:SetPos(hkSqX, bY2) ; susp:SetSize(54, 18)
+                        susp.Paint = function(self,w,h)
+                            draw.RoundedBox(3, 0, 0, w, h, Color(200,80,30,200))
+                            draw.SimpleText("SUSPECT","DermaDefault",w/2,h/2,color_white,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+                        end
+                    end
 
                     local hkCopy = row:Add("DButton")
-                    hkCopy:SetPos(hkB1X, bY2) ; hkCopy:SetSize(BTN_W, 18) ; hkCopy:SetText("")
+                    hkCopy:SetPos(hkCpX, bY2) ; hkCopy:SetSize(BTN_W, 18) ; hkCopy:SetText("")
                     hkCopy.Paint = function(self,w,h)
                         draw.RoundedBox(3,0,0,w,h, self:IsHovered() and COL_BTNHOV or COL_BTN)
                         surface.SetDrawColor(COL_BORDER) ; surface.DrawOutlinedRect(0,0,w,h,1)
@@ -2938,7 +3013,7 @@ UpdateContentPanel = function(panel)
                     end
 
                     local hkRemove = row:Add("DButton")
-                    hkRemove:SetPos(hkB2X, bY2) ; hkRemove:SetSize(BTN_W, 18) ; hkRemove:SetText("")
+                    hkRemove:SetPos(hkRemX, bY2) ; hkRemove:SetSize(BTN_W, 18) ; hkRemove:SetText("")
                     hkRemove.Paint = function(self,w,h)
                         draw.RoundedBox(3,0,0,w,h, self:IsHovered() and Color(100,35,35,255) or COL_BTN)
                         surface.SetDrawColor(COL_BORDER) ; surface.DrawOutlinedRect(0,0,w,h,1)
@@ -3066,6 +3141,7 @@ local PANIC_VISUAL_HOOKS = {
     "KeroNoRecoil", "KeroNoSpread", "KeroDrawSuitName", "KeroDrawSuitHealth",
     "KeroHitsound", "KeroFullbrightThink", "KeroFullbright", "KeroFOVChange",
     "KeroFOVCircle", "KeroHueAdvance", "KeroAspectRatio", "KeroCombatCheckHUD",
+    "KeroTargetHighlight", "KeroAntiSpyHUD",
 }
 
 -- Store original hook functions so we can restore them
@@ -3113,6 +3189,111 @@ hook.Add("Think", "KeroPanicKeyThink", function()
     end
 end)
 
+-- ════════════════════════════════════════════════
+--  Freecam — camera floats freely with full mouse
+--  look, but the player CHARACTER stays completely
+--  still: body doesn't rotate, doesn't move.
+--
+--  How it works:
+--  • _freecamAng accumulates mouse deltas each tick
+--    by reading the raw cmd view-angle (which GMod
+--    always updates from raw mouse input) and adding
+--    the delta to our own angle — so the camera
+--    follows the mouse freely.
+--  • CreateMove stamps _freecamFrozenAng (the angle
+--    at the moment freecam was activated) into the
+--    cmd and zeroes all movement — the server/physics
+--    never sees any rotation or movement.
+--  • CalcView returns _freecamPos + _freecamAng so
+--    the rendered view follows the camera.
+-- ════════════════════════════════════════════════
+local wasFreecamKeyDown  = false
+local _freecamActive     = false
+local _freecamPos        = nil
+local _freecamAng        = nil   -- camera angles, driven by mouse deltas
+local _freecamFrozenAng  = nil   -- body/cmd angle locked at activation
+local _freecamPrevCmdAng = nil   -- last cmd angle, used to compute mouse delta
+
+hook.Add("Think", "KeroFreecamKeyThink", function()
+    local fk = options.Config and options.Config.FreecamKey
+    if not fk then wasFreecamKeyDown = false ; return end
+    local down = input.IsKeyDown(fk)
+    if not down or wasFreecamKeyDown then wasFreecamKeyDown = down ; return end
+    wasFreecamKeyDown = down
+
+    _freecamActive = not _freecamActive
+    if _freecamActive then
+        local lp = LocalPlayer()
+        if IsValid(lp) then
+            local ea = lp:EyeAngles()
+            _freecamPos        = lp:EyePos()
+            _freecamAng        = Angle(ea.p, ea.y, 0)
+            _freecamFrozenAng  = Angle(ea.p, ea.y, 0)
+            _freecamPrevCmdAng = Angle(ea.p, ea.y, 0)
+        end
+    else
+        _freecamPos        = nil
+        _freecamAng        = nil
+        _freecamFrozenAng  = nil
+        _freecamPrevCmdAng = nil
+    end
+end)
+
+-- Advance camera position using WASD relative to current camera angle
+hook.Add("Think", "KeroFreecamMove", function()
+    if not _freecamActive or not _freecamPos or not _freecamAng then return end
+    local speed = 200 * FrameTime()
+    local fwd   = _freecamAng:Forward()
+    local right = _freecamAng:Right()
+    local up    = Vector(0, 0, 1)
+
+    if input.IsKeyDown(KEY_W)        then _freecamPos = _freecamPos + fwd   * speed end
+    if input.IsKeyDown(KEY_S)        then _freecamPos = _freecamPos - fwd   * speed end
+    if input.IsKeyDown(KEY_A)        then _freecamPos = _freecamPos - right  * speed end
+    if input.IsKeyDown(KEY_D)        then _freecamPos = _freecamPos + right  * speed end
+    if input.IsKeyDown(KEY_SPACE)    then _freecamPos = _freecamPos + up     * speed end
+    if input.IsKeyDown(KEY_LCONTROL) then _freecamPos = _freecamPos - up     * speed end
+end)
+
+-- Lock the player body/cmd; accumulate mouse deltas into _freecamAng only
+hook.Add("CreateMove", "KeroFreecamFreeze", function(cmd)
+    if not _freecamActive or not _freecamFrozenAng then return end
+
+    -- The cmd view angle is always set from raw mouse input by the engine.
+    -- Compute how much the mouse moved since last tick and apply that delta
+    -- to _freecamAng so our camera follows the mouse, without touching the body.
+    local cmdAng = cmd:GetViewAngles()
+    if _freecamPrevCmdAng then
+        local dp = math.AngleDifference(cmdAng.p, _freecamPrevCmdAng.p)
+        local dy = math.AngleDifference(cmdAng.y, _freecamPrevCmdAng.y)
+        if _freecamAng then
+            _freecamAng.p = math.Clamp(_freecamAng.p + dp, -89, 89)
+            _freecamAng.y = math.NormalizeAngle(_freecamAng.y + dy)
+            _freecamAng.r = 0
+        end
+    end
+    _freecamPrevCmdAng = Angle(cmdAng.p, cmdAng.y, 0)
+
+    -- Zero movement and lock the cmd to the frozen body angle
+    cmd:SetForwardMove(0)
+    cmd:SetSideMove(0)
+    cmd:SetUpMove(0)
+    cmd:SetButtons(bit.band(cmd:GetButtons(), bit.bnot(IN_ATTACK + IN_ATTACK2 + IN_JUMP + IN_DUCK + IN_USE)))
+    cmd:SetViewAngles(_freecamFrozenAng)
+    LocalPlayer():SetEyeAngles(_freecamFrozenAng)
+end)
+
+-- Return the floating camera position/angle to the renderer
+hook.Add("CalcView", "KeroFreecam", function(ply, origin, angles, fov)
+    if not _freecamActive or not _freecamPos or not _freecamAng then return end
+    return {
+        origin     = _freecamPos,
+        angles     = _freecamAng,
+        fov        = fov,
+        drawviewer = true,
+    }
+end)
+
 
 -- ════════════════════════════════════════════════
 --  Kerosene ASCII banner
@@ -3122,15 +3303,15 @@ local KERO_ASCII = [[
  | |/ / / _ \| '__/ _ \/ __/ / _ \ '_ \ / _ \
  | ' < |  __/| | | (_) \__ \|  __/ | | |  __/
  |_|\_\ \___||_|  \___/|___/ \___|_| |_|\___|
-                                        v1.41
+                                        v1.57
 ]]
 
 local function PrintKeroBanner()
-    MsgN(string.Replace(KERO_ASCII, "v0.992", KERO_VERSION))
+    MsgN(KERO_ASCII)
 end
 
 local function KeroNotifDRP(text, notifType, duration)
-    text = string.Replace(text, "Kerosene v0.992", "Kerosene " .. KERO_VERSION)
+    text = string.Replace(text, "Kerosene v1.57", "Kerosene " .. KERO_VERSION)
     notifType = notifType or NOTIFY_HINT
     duration  = duration  or 5
     if GAMEMODE and GAMEMODE.Notify then
@@ -3159,7 +3340,7 @@ end)
 
 timer.Simple(0.5, function()
     surface.PlaySound("ambient/water/drip1.wav")
-    KeroNotifDRP("Kerosene v0.992 loaded — press " .. menuKeyName .. " to open.", NOTIFY_HINT, 6)
+    KeroNotifDRP("Kerosene v1.57 loaded — press " .. menuKeyName .. " to open.", NOTIFY_HINT, 6)
 
     local files, _ = file.Find("kero_*.txt", "DATA")
     if files and #files > 0 then
@@ -3259,21 +3440,157 @@ local RANDOM_BONES = {
     "ValveBiped.Bip01_Head1",
     "ValveBiped.Bip01_Spine4",
     "ValveBiped.Bip01_Spine",
-    "ValveBiped.Bip01_L_Hand",
-    "ValveBiped.Bip01_R_Hand",
+    "ValveBiped.Bip01_Pelvis",
+    "ValveBiped.Bip01_Spine1",
+    "ValveBiped.Bip01_Spine2",
+    "ValveBiped.Bip01_L_Thigh",
+    "ValveBiped.Bip01_R_Thigh",
+    "ValveBiped.Bip01_L_Calf",
+    "ValveBiped.Bip01_R_Calf",
+}
+-- Note: hands (L_Hand, R_Hand), feet (L_Foot, R_Foot), and arms (L_UpperArm, R_UpperArm, L_Forearm, R_Forearm) are intentionally excluded.
+
+-- Smooth bone shuffler: when TargetMode is "Random" we pick a new bone
+-- every BONE_SHUFFLE_INTERVAL seconds and lerp toward it smoothly.
+-- The next bone is chosen from bones close to the current one (proximity cluster)
+-- so movement feels natural rather than jumping across the whole body.
+local _shuffleBoneIndex  = 1
+local _shuffleNextTime   = 0
+local _shuffleCurrentPos = nil   -- smoothed world position being tracked
+local _shuffleInitialised = false -- whether we've seeded the start bone for this target
+local BONE_SHUFFLE_INTERVAL = 1.0  -- seconds between bone changes
+local BONE_MOTION_DURATION  = 2.0  -- seconds the lerp takes (twice the interval)
+
+-- Pick the RANDOM_BONES index whose world position projects closest to screen-centre.
+-- Called once when a new target is first picked up in Random mode.
+local function FindClosestBoneToScreenCentre(ply)
+    local cx, cy = ScrW() / 2, ScrH() / 2
+    local bestIdx  = 1
+    local bestDist = math.huge
+    for i, boneName in ipairs(RANDOM_BONES) do
+        local bid = ply:LookupBone(boneName)
+        if bid then
+            local bpos = ply:GetBonePosition(bid)
+            if bpos then
+                local sp = bpos:ToScreen()
+                if sp.visible then
+                    local dx = sp.x - cx
+                    local dy = sp.y - cy
+                    local d  = dx * dx + dy * dy
+                    if d < bestDist then
+                        bestDist = d
+                        bestIdx  = i
+                    end
+                end
+            end
+        end
+    end
+    return bestIdx
+end
+
+-- Proximity clusters: each bone index maps to a list of "nearby" bone indices
+-- so the shuffle only picks from adjacent body regions.
+local BONE_CLUSTERS = {
+    [1] = {1, 2},          -- Head → Head or Upper Spine
+    [2] = {1, 2, 3},       -- Upper Spine → Head, Upper Spine, or Mid Spine
+    [3] = {2, 3, 4, 5},    -- Mid Spine → Upper Spine, Mid Spine, Lower Spine, or Pelvis
+    [4] = {3, 4, 5},       -- Lower Spine → Mid Spine, Pelvis, or Spine1
+    [5] = {3, 4, 5, 6},    -- Pelvis → Spine area or Spine2
+    [6] = {4, 5, 6, 7, 8}, -- Spine1 → Pelvis, Spine2, or Thighs
+    [7] = {6, 7, 9},       -- L Thigh → Spine1, L Thigh, or L Calf
+    [8] = {6, 8, 10},      -- R Thigh → Spine1, R Thigh, or R Calf
+    [9] = {7, 9},           -- L Calf → L Thigh or L Calf
+    [10] = {8, 10},         -- R Calf → R Thigh or R Calf
 }
 
 local function GetAimWorldPos(ply)
     local mode     = options.Combat.TargetMode or "Torso"
-    local boneName = (mode == "Random") and RANDOM_BONES[math.random(#RANDOM_BONES)] or BONE_MAP[mode]
-    if boneName then
+
+    if mode == "Random" then
+        -- On the very first call for a target (or when mode is freshly selected),
+        -- seed _shuffleBoneIndex to whichever bone is closest to the crosshair.
+        if not _shuffleInitialised then
+            _shuffleInitialised = true
+            _shuffleBoneIndex   = FindClosestBoneToScreenCentre(ply)
+            _shuffleNextTime    = CurTime() + BONE_SHUFFLE_INTERVAL
+            _shuffleCurrentPos  = nil
+        end
+
+        -- Smoothly shuffle between bones on a timer instead of every frame.
+        -- Each new bone is picked from a proximity cluster around the current bone
+        -- so movement stays within nearby body regions (no wild jumps).
+        -- The actual motion (lerp) takes BONE_MOTION_DURATION (2s) while shuffles
+        -- still trigger every BONE_SHUFFLE_INTERVAL (1s).
+        local now = CurTime()
+        if now >= _shuffleNextTime then
+            _shuffleNextTime  = now + BONE_SHUFFLE_INTERVAL
+            -- Pick next bone from the cluster of nearby bones, avoiding repeats
+            local cluster = BONE_CLUSTERS[_shuffleBoneIndex] or {_shuffleBoneIndex}
+            local prev    = _shuffleBoneIndex
+            local attempts = 0
+            repeat
+                local ci = math.random(#cluster)
+                _shuffleBoneIndex = cluster[ci]
+                attempts = attempts + 1
+            until _shuffleBoneIndex ~= prev or #cluster == 1 or attempts > 5
+        end
+        local boneName = RANDOM_BONES[_shuffleBoneIndex]
         local bid = ply:LookupBone(boneName)
         if bid then
             local bpos = ply:GetBonePosition(bid)
-            if bpos then return bpos end
+            if bpos then
+                -- Lerp the tracked position toward the new bone over BONE_MOTION_DURATION for smooth transition
+                if not _shuffleCurrentPos then
+                    _shuffleCurrentPos = bpos
+                else
+                    local lerpFactor = math.Clamp(FrameTime() / BONE_MOTION_DURATION, 0, 1)
+                    _shuffleCurrentPos = LerpVector(lerpFactor, _shuffleCurrentPos, bpos)
+                end
+                -- Apply wiggle offset on top (separate, doesn't contaminate the lerp base)
+                local wiggle = (options.Combat.LockWiggle or 0) / 100
+                if wiggle > 0 then
+                    local t = CurTime()
+                    local spread = wiggle * 8 * 3 / 15  -- 3x previous sensitivity
+                    return _shuffleCurrentPos + Vector(
+                        math.sin(t * 7.3  + 1.1) * spread,
+                        math.cos(t * 5.9  + 2.4) * spread,
+                        math.sin(t * 11.1 + 3.7) * spread * 0.7
+                            + math.cos(t * 3.3 + 0.9) * spread * 0.4
+                    )
+                end
+                return _shuffleCurrentPos
+            end
         end
+        return ply:GetPos() + Vector(0, 0, 60)
+    else
+        -- Reset shuffle state when not in random mode
+        _shuffleCurrentPos  = nil
+        _shuffleInitialised = false
+        local boneName = BONE_MAP[mode]
+        local targetPos = nil
+        if boneName then
+            local bid = ply:LookupBone(boneName)
+            if bid then
+                targetPos = ply:GetBonePosition(bid)
+            end
+        end
+        if not targetPos then
+            targetPos = ply:GetPos() + Vector(0, 0, 60)
+        end
+        -- Apply wiggle offset around the chosen bone
+        local wiggle = (options.Combat.LockWiggle or 0) / 100
+        if wiggle > 0 then
+            local t = CurTime()
+            local spread = wiggle * 8 * 3 / 15  -- 3x previous sensitivity
+            return targetPos + Vector(
+                math.sin(t * 7.3  + 1.1) * spread,
+                math.cos(t * 5.9  + 2.4) * spread,
+                math.sin(t * 11.1 + 3.7) * spread * 0.7
+                    + math.cos(t * 3.3 + 0.9) * spread * 0.4
+            )
+        end
+        return targetPos
     end
-    return ply:GetPos() + Vector(0, 0, 60)
 end
 
 -- ── Bone-based visibility: returns true if ANY bone of the target is visible ──
@@ -3365,6 +3682,7 @@ end
 -- ── Camera aimbot state ────────────────────────────────────────────────
 local _cam_angle = nil
 local _cam_base  = nil
+local _lastAimbotTarget = nil  -- used to detect target switches and re-seed random bone
 
 hook.Add("Think", "KeroAimbotThink", function()
     if not options.Combat.CombatOption1
@@ -3382,7 +3700,15 @@ hook.Add("Think", "KeroAimbotThink", function()
 
     local target = GetBestTarget()
     if not IsValid(target) then
-        _cam_angle = nil ; _cam_base = nil ; return
+        _cam_angle = nil ; _cam_base = nil
+        _lastAimbotTarget = nil
+        return
+    end
+
+    -- If the target changed, force the random-bone seeder to re-run
+    if target ~= _lastAimbotTarget then
+        _lastAimbotTarget   = target
+        _shuffleInitialised = false
     end
 
     local wpos       = GetAimWorldPos(target)
@@ -3411,14 +3737,18 @@ hook.Add("Think", "KeroAimbotThink", function()
     lp:SetEyeAngles(newAng)
 end)
 
--- ── Silent aimbot — Aquarium realAng accumulator ───────────────────────
--- Tracks real mouse movement so the camera never visually snaps.
--- On MOUSE_LEFT, silently redirects the cmd angle to the target.
-local _realAng = nil
+-- ── Silent aimbot — eye-angle delta tracker ────────────────────────────
+-- Instead of trying to reconstruct the view angle from raw mouse deltas
+-- (which causes jitter due to sensitivity mismatch), we track the actual
+-- eye angle change between ticks. This keeps the visual camera perfectly
+-- smooth while silently redirecting the cmd angle to the target on fire.
+local _realAng     = nil   -- the "true" view angle the player thinks they have
+local _prevEyeAng  = nil   -- eye angle from last frame, for delta tracking
 
 hook.Add("CreateMove", "KeroCameraAimbot", function(cmd)
     if not options.Combat.CombatOption1 then
-        _realAng = nil
+        _realAng    = nil
+        _prevEyeAng = nil
         return
     end
 
@@ -3426,27 +3756,40 @@ hook.Add("CreateMove", "KeroCameraAimbot", function(cmd)
 
     if mode == "Camera" then
         -- Stamp the smoothed camera angle into the usercmd
-        _realAng = nil
+        _realAng    = nil
+        _prevEyeAng = nil
         if aimbotKeyDown and _cam_angle then
             cmd:SetViewAngles(_cam_angle)
         end
 
     elseif mode == "Silent" then
-        -- Accumulate real mouse delta every tick (mirrors what the game would
-        -- have done) so we always know where the player *thinks* they are aiming.
-        if not _realAng then
-            _realAng = cmd:GetViewAngles()
-        end
+        local lp = LocalPlayer()
+        if not IsValid(lp) then return end
 
-        -- Skip the very first cmd (CommandNumber == 0) — it carries garbled data
-        if cmd:CommandNumber() == 0 then
+        local curEye = lp:EyeAngles()
+
+        -- Initialise on first tick
+        if not _realAng then
+            _realAng    = Angle(curEye.p, curEye.y, 0)
+            _prevEyeAng = Angle(curEye.p, curEye.y, 0)
             cmd:SetViewAngles(_realAng)
             return
         end
 
-        _realAng = _realAng + Angle(cmd:GetMouseY() * 0.023, cmd:GetMouseX() * -0.023, 0)
-        _realAng.p = math.Clamp(math.NormalizeAngle(_realAng.p), -89, 89)
-        _realAng.y = math.NormalizeAngle(_realAng.y)
+        -- Skip garbled first cmd
+        if cmd:CommandNumber() == 0 then
+            _prevEyeAng = Angle(curEye.p, curEye.y, 0)
+            cmd:SetViewAngles(_realAng)
+            return
+        end
+
+        -- Accumulate the real delta from actual eye-angle change (smooth, no sensitivity assumptions)
+        local dp = math.AngleDifference(curEye.p, _prevEyeAng.p)
+        local dy = math.AngleDifference(curEye.y, _prevEyeAng.y)
+        _prevEyeAng = Angle(curEye.p, curEye.y, 0)
+
+        _realAng.p = math.Clamp(math.NormalizeAngle(_realAng.p + dp), -89, 89)
+        _realAng.y = math.NormalizeAngle(_realAng.y + dy)
         _realAng.r = 0
 
         -- Only redirect when the aimbot key is held and MOUSE_LEFT is firing
@@ -3463,8 +3806,7 @@ hook.Add("CreateMove", "KeroCameraAimbot", function(cmd)
             return
         end
 
-        local lp = LocalPlayer()
-        if not IsValid(lp) or not lp:Alive() then
+        if not lp:Alive() then
             cmd:SetViewAngles(_realAng)
             return
         end
@@ -3493,7 +3835,7 @@ hook.Add("HUDPaint", "KeroHueAdvance", function()
 end)
 
 -- ════════════════════════════════════════════════
---  ESP: 2D Bounds helper (must be defined before all ESP hooks)
+--  2D/3D Bounding-Box Helpers (must be defined before any hook uses them)
 -- ════════════════════════════════════════════════
 local function Get2DBounds(ent)
     local org = ent:GetPos()
@@ -3553,6 +3895,20 @@ local function DrawBox3D(ent, col)
         surface.DrawLine(sc[i].x,sc[i].y,sc[i+4].x,sc[i+4].y)
     end
 end
+
+-- ════════════════════════════════════════════════
+--  Target Highlight
+--  When enabled, temporarily overrides all ESP colours
+--  to the selected highlight colour for the targeted player.
+-- ════════════════════════════════════════════════
+hook.Add("HUDPaint", "KeroTargetHighlight", function()
+    if not options.Combat.TargetHighlight then
+        _targetHighlightTarget = nil
+        return
+    end
+    _targetHighlightTarget = GetBestTarget()
+end)
+
 
 -- ════════════════════════════════════════════════
 --  ESP: Player Names
@@ -4187,6 +4543,210 @@ hook.Add("HUDPaint", "KeroCombatCheckHUD", function()
         end
     end
 end)
+
+-- ═══════════════════════════════════════════════════════════════════
+-- ANTI-SPY  (Misc tab toggle — sits between Hitsound and Fullbright)
+-- ═══════════════════════════════════════════════════════════════════
+
+local _antiSpyActive          = false
+local _antiSpyNotifyTime      = 0
+local _antiSpyNotifyCooldown  = 5
+
+local _origRenderCapture       = render.Capture
+local _origRenderCapturePixels = render.CapturePixels
+local _origRunConsoleCommand   = RunConsoleCommand
+
+-- Separate notification queue for Anti-Spy — red-themed, uses same slide/fade style as CombatCheck
+local antiSpyNotifs = {}
+
+local function AntiSpyNotify(attemptType)
+    local t = CurTime()
+    if t - _antiSpyNotifyTime < _antiSpyNotifyCooldown then return end
+    _antiSpyNotifyTime = t
+
+    -- Deduplicate within 1.5s
+    for _, n in ipairs(antiSpyNotifs) do
+        if n.text == attemptType and (t - n.created) < 1.5 then
+            n.expiry = t + 4 ; return
+        end
+    end
+    table.insert(antiSpyNotifs, {
+        text    = attemptType,
+        created = t,
+        expiry  = t + 4,
+    })
+    if #antiSpyNotifs > 5 then table.remove(antiSpyNotifs, 1) end
+
+    surface.PlaySound("buttons/button10.wav")
+end
+
+hook.Add("HUDPaint", "KeroAntiSpyHUD", function()
+    if not _antiSpyActive then return end
+
+    for i = #antiSpyNotifs, 1, -1 do
+        if CurTime() > antiSpyNotifs[i].expiry then table.remove(antiSpyNotifs, i) end
+    end
+    if #antiSpyNotifs == 0 then return end
+
+    local scrW    = ScrW()
+    local NOTIF_W = 300
+    local NOTIF_H = 34
+    local PADDING = 4
+    -- Stack below the CombatCheck notifications — offset downward
+    local TOP_Y   = 16 + 8 * (NOTIF_H + PADDING)
+    local count   = #antiSpyNotifs
+
+    -- Red accent colour for Anti-Spy
+    local accentFull = Color(220, 45, 45, 255)
+
+    for i = count, math.max(count - 4, 1), -1 do
+        local notif    = antiSpyNotifs[i]
+        local age      = CurTime() - notif.created
+        local timeLeft = notif.expiry - CurTime()
+        local life     = notif.expiry - notif.created
+
+        local fadeIn   = math.Clamp(age / 0.15, 0, 1)
+        local fadeOut  = math.Clamp(timeLeft / 0.4, 0, 1)
+        local alpha    = math.min(fadeIn, fadeOut)
+
+        local slot  = count - i
+        local ty    = TOP_Y + slot * (NOTIF_H + PADDING)
+        local tx    = scrW - NOTIF_W - 14
+        local slideX  = tx + (1 - alpha) * 40
+        local bgAlpha = math.Round(alpha * 160)
+
+        -- Shadow
+        draw.RoundedBox(6, slideX + 2, ty + 2, NOTIF_W, NOTIF_H, Color(0, 0, 0, math.Round(alpha * 60)))
+        -- Background — slightly red-tinted
+        draw.RoundedBox(5, slideX, ty, NOTIF_W, NOTIF_H, Color(22, 10, 10, bgAlpha))
+
+        local accentCol = Color(accentFull.r, accentFull.g, accentFull.b, math.Round(alpha * 230))
+
+        -- Left accent bar
+        draw.RoundedBoxEx(4, slideX, ty, 3, NOTIF_H, accentCol, true, false, true, false)
+        -- Top highlight
+        surface.SetDrawColor(255, 255, 255, math.Round(alpha * 10))
+        surface.DrawRect(slideX + 4, ty, NOTIF_W - 4, 1)
+        -- Border
+        surface.SetDrawColor(accentFull.r, accentFull.g, accentFull.b, math.Round(alpha * 45))
+        surface.DrawOutlinedRect(slideX, ty, NOTIF_W, NOTIF_H, 1)
+
+        -- Type label "SPY"
+        draw.SimpleText("SPY", "DermaDefault",
+            slideX + 10, ty + NOTIF_H / 2,
+            Color(255, 90, 90, math.Round(alpha * 210)), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+
+        -- Divider
+        surface.SetDrawColor(accentFull.r, accentFull.g, accentFull.b, math.Round(alpha * 30))
+        surface.DrawRect(slideX + 34, ty + 5, 1, NOTIF_H - 10)
+
+        -- Main text: "Blocked <attemptType>"
+        draw.SimpleText("Blocked " .. notif.text, "DermaDefault",
+            slideX + 42, ty + NOTIF_H / 2,
+            Color(230, 210, 210, math.Round(alpha * 220)), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+
+        -- Progress bar
+        local prog = math.Clamp(timeLeft / life, 0, 1)
+        local barW = math.Round((NOTIF_W - 6) * prog)
+        if barW > 0 then
+            draw.RoundedBox(2, slideX + 3, ty + NOTIF_H - 3, NOTIF_W - 6, 2,
+                Color(accentFull.r, accentFull.g, accentFull.b, math.Round(alpha * 50)))
+            draw.RoundedBox(2, slideX + 3, ty + NOTIF_H - 3, barW, 2, accentCol)
+        end
+    end
+end)
+
+KeroAntiSpyApply = function(enable)
+    if enable == _antiSpyActive then return end
+    _antiSpyActive = enable
+
+    if enable then
+        -- Block render.Capture
+        render.Capture = function(...)
+            AntiSpyNotify("render.Capture")
+            return nil
+        end
+
+        -- Block render.CapturePixels
+        render.CapturePixels = function(...)
+            AntiSpyNotify("render.CapturePixels")
+            return {}
+        end
+
+        -- Block screenshot console commands
+        RunConsoleCommand = function(cmd, ...)
+            local lower = string.lower(cmd or "")
+            if lower == "screenshot" or lower == "jpeg" or lower == "png"
+            or lower == "snapshot"   or lower == "screenshot_full"
+            or lower == "screenshot_save" then
+                AntiSpyNotify("console cmd: " .. cmd)
+                return
+            end
+            return _origRunConsoleCommand(cmd, ...)
+        end
+
+        -- Block screenshot key binds
+        hook.Add("PlayerBindPress", "KeroAntiSpyBind", function(ply, bind, pressed)
+            if bind and (bind:find("screenshot") or bind:find("jpeg")
+                      or bind:find("snapshot")   or bind == "f12") then
+                AntiSpyNotify("screenshot bind (" .. bind .. ")")
+                return true
+            end
+        end)
+
+        -- Spike non-main render targets (fails silent screengrabs)
+        hook.Add("PreRender", "KeroAntiSpyRenderSpike", function()
+            local rt = render.GetRenderTarget()
+            if rt and rt:GetName() and rt:GetName() ~= "_rt_FullFrameFB" then
+                AntiSpyNotify("render target: " .. rt:GetName())
+                render.SetRenderTarget(nil)
+            end
+        end)
+
+        -- Strip suspicious Think/StartCommand/CreateMove hooks (keeps all KeroHooks)
+        local keroSafe = {
+            KeroAimbotKeyTrack=true, KeroAimbotThink=true, KeroCameraAimbot=true,
+            KeroNoRecoil=true, KeroNoSpread=true, KeroCombatCheckShoot=true,
+            KeroCombatCheckDamage=true, KeroCombatCheckHPPoll=true,
+            KeroFOVCircle=true, KeroHueAdvance=true, KeroDisplayNames=true,
+            KeroDraw2DBoxes=true, KeroDrawMoney=true, KeroDrawWeapon=true,
+            KeroDrawDistance=true, KeroDrawWorldESP=true, KeroDrawSuitName=true,
+            KeroDrawSuitHealth=true, KeroWeaponChams=true, KeroArmChams=true,
+            KeroHitsound=true, KeroFullbrightThink=true, KeroFullbright=true,
+            KeroFOVChange=true, KeroAspectRatio=true, KeroCombatCheckHUD=true,
+            ToggleKeroMenu=true, KeroPanicKeyThink=true, KeroWhitelistBoot=true,
+            -- Anti-spy's own hooks
+            KeroAntiSpyBind=true, KeroAntiSpyRenderSpike=true,
+        }
+        for event, hooks in pairs(hook.GetTable()) do
+            if event == "Think" or event == "StartCommand" or event == "CreateMove" then
+                for name in pairs(hooks) do
+                    if not keroSafe[name] then
+                        hook.Remove(event, name)
+                    end
+                end
+            end
+        end
+
+        -- Remove screenshot console commands
+        local scrCmds = {"screenshot","jpeg","png","screenshot_full","snapshot"}
+        for _, cmd in ipairs(scrCmds) do concommand.Remove(cmd) end
+
+    else
+        -- Restore overridden globals
+        render.Capture       = _origRenderCapture
+        render.CapturePixels = _origRenderCapturePixels
+        RunConsoleCommand    = _origRunConsoleCommand
+
+        hook.Remove("PlayerBindPress",  "KeroAntiSpyBind")
+        hook.Remove("PreRender",        "KeroAntiSpyRenderSpike")
+    end
+end
+
+-- Apply on load if option was saved as enabled
+if options.Misc.AntiSpy then
+    KeroAntiSpyApply(true)
+end
 
 end -- BootKerosene
 
