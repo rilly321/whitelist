@@ -1,9 +1,9 @@
 -- ═══════════════════════════════════════════════
---  Kerosene | V1.57  by Wobble
+--  Kerosene | V1.58  by Wobble
 -- ═══════════════════════════════════════════════
 
 -- ── Menu state ────────────────────────────────
-local KERO_VERSION = "v1.57"
+local KERO_VERSION = "v1.58"
 
 local KERO_WHITELIST = {
     url = "https://github.com/rilly321/whitelist/blob/main/whitelist.txt",
@@ -1315,6 +1315,8 @@ end
 --  Supports keyboard keys AND mouse buttons 4 & 5
 -- ════════════════════════════════════════════════
 local aimbotKeyDown = false
+local aimbotToggleActive = false
+local aimbotBindWasDown = false
 
 -- Mouse button constants (GMod uses these for MOUSE_4 / MOUSE_5)
 local MOUSE_BUTTON4 = MOUSE_4 or 107
@@ -1331,7 +1333,20 @@ local function IsAimbotKeyDown()
 end
 
 hook.Add("Think", "KeroAimbotKeyTrack", function()
-    aimbotKeyDown = IsAimbotKeyDown()
+    local physicalDown = IsAimbotKeyDown()
+    local activationMode = options.Combat.AimActivationMode or "Hold"
+
+    if activationMode == "Toggle" then
+        if physicalDown and not aimbotBindWasDown then
+            aimbotToggleActive = not aimbotToggleActive
+        end
+        aimbotKeyDown = aimbotToggleActive
+    else
+        aimbotToggleActive = false
+        aimbotKeyDown = physicalDown
+    end
+
+    aimbotBindWasDown = physicalDown
 end)
 
 -- ════════════════════════════════════════════════
@@ -1752,22 +1767,20 @@ UpdateContentPanel = function(panel)
                 -- colour/rainbow buttons always visible; nothing to hide
             end
 
-            local hitChanceSlider = CreateSlider(panel, "Hit Chance (%)", 10, 128, "CombatOption2", "Combat")
-            hitChanceSlider:SetVisible(aimbotBtn.isChecked and options.Combat.CameraSilentMode == "Silent")
-
             local smoothingSlider = CreateSlider(panel, "Smoothing", -13, 128, "CombatOption3", "Combat", 0, 100)
-            smoothingSlider:SetVisible(aimbotBtn.isChecked and options.Combat.CameraSilentMode == "Camera")
+            smoothingSlider:SetVisible(aimbotBtn.isChecked)
 
             local wiggleSlider = CreateSlider(panel, "Lock Wiggle", -8, 155, "LockWiggle", "Combat", 0, 100)
             wiggleSlider:SetVisible(aimbotBtn.isChecked)
 
             local methodDD = MakeThemedDropdown(panel, 10, 68, 140,
-                {"Camera", "Silent"},
-                options.Combat.CameraSilentMode or "Camera",
+                {"Toggle", "Hold"},
+                options.Combat.AimActivationMode or "Hold",
                 function(val)
-                    options.Combat.CameraSilentMode = val
-                    smoothingSlider:SetVisible(aimbotBtn.isChecked and val == "Camera")
-                    hitChanceSlider:SetVisible(aimbotBtn.isChecked and val == "Silent")
+                    options.Combat.AimActivationMode = val
+                    if val ~= "Toggle" then
+                        aimbotToggleActive = false
+                    end
                 end)
             methodDD:SetVisible(aimbotBtn.isChecked)
 
@@ -1832,9 +1845,7 @@ UpdateContentPanel = function(panel)
                 methodDD:SetVisible(state) ; bodyDD:SetVisible(state)
                 keybindButton:SetVisible(state)
                 wiggleSlider:SetVisible(state)
-                local mode = options.Combat.CameraSilentMode
-                hitChanceSlider:SetVisible(state and mode == "Silent")
-                smoothingSlider:SetVisible(state and mode == "Camera")
+                smoothingSlider:SetVisible(state)
             end
 
         -- ══ VISUALS ══════════════════════════════
@@ -2628,6 +2639,7 @@ UpdateContentPanel = function(panel)
                         "KeroFreecamKeyThink",
                         "KeroFreecam",
                         "KeroFreecamMove",
+                        "KeroFreecamMouseLook",
                         "KeroFreecamFreeze",
                     }
                     for _, name in ipairs(hookNames) do
@@ -2770,6 +2782,8 @@ UpdateContentPanel = function(panel)
                     KeroDrawSuitHealth=true, KeroHitsound=true, KeroFullbrightThink=true,
                     KeroFullbright=true, KeroFOVChange=true, KeroAspectRatio=true,
                     KeroWhitelistBoot=true, KeroTargetHighlight=true,
+                    KeroFreecamKeyThink=true, KeroFreecamMove=true,
+                    KeroFreecamMouseLook=true, KeroFreecamFreeze=true,
                 }
                 for event, hooks in pairs(hooktbl) do
                     for name, fn in pairs(hooks) do
@@ -3212,7 +3226,6 @@ local _freecamActive     = false
 local _freecamPos        = nil
 local _freecamAng        = nil   -- camera angles, driven by mouse deltas
 local _freecamFrozenAng  = nil   -- body/cmd angle locked at activation
-local _freecamPrevCmdAng = nil   -- last cmd angle, used to compute mouse delta
 
 hook.Add("Think", "KeroFreecamKeyThink", function()
     local fk = options.Config and options.Config.FreecamKey
@@ -3229,13 +3242,11 @@ hook.Add("Think", "KeroFreecamKeyThink", function()
             _freecamPos        = lp:EyePos()
             _freecamAng        = Angle(ea.p, ea.y, 0)
             _freecamFrozenAng  = Angle(ea.p, ea.y, 0)
-            _freecamPrevCmdAng = Angle(ea.p, ea.y, 0)
         end
     else
         _freecamPos        = nil
         _freecamAng        = nil
         _freecamFrozenAng  = nil
-        _freecamPrevCmdAng = nil
     end
 end)
 
@@ -3255,24 +3266,26 @@ hook.Add("Think", "KeroFreecamMove", function()
     if input.IsKeyDown(KEY_LCONTROL) then _freecamPos = _freecamPos - up     * speed end
 end)
 
--- Lock the player body/cmd; accumulate mouse deltas into _freecamAng only
+hook.Add("InputMouseApply", "KeroFreecamMouseLook", function(cmd, x, y, ang)
+    if not _freecamActive or not _freecamAng then return end
+
+    local lp = LocalPlayer()
+    if not IsValid(lp) then return end
+
+    local sensitivity = lp:GetInfoNum("sensitivity", 1)
+    local pitch = y * 0.022 * sensitivity
+    local yaw = x * -0.022 * sensitivity
+
+    _freecamAng.p = math.Clamp(_freecamAng.p + pitch, -89, 89)
+    _freecamAng.y = math.NormalizeAngle(_freecamAng.y + yaw)
+    _freecamAng.r = 0
+
+    return true
+end)
+
+-- Lock the player body/cmd while freecam drives the rendered view
 hook.Add("CreateMove", "KeroFreecamFreeze", function(cmd)
     if not _freecamActive or not _freecamFrozenAng then return end
-
-    -- The cmd view angle is always set from raw mouse input by the engine.
-    -- Compute how much the mouse moved since last tick and apply that delta
-    -- to _freecamAng so our camera follows the mouse, without touching the body.
-    local cmdAng = cmd:GetViewAngles()
-    if _freecamPrevCmdAng then
-        local dp = math.AngleDifference(cmdAng.p, _freecamPrevCmdAng.p)
-        local dy = math.AngleDifference(cmdAng.y, _freecamPrevCmdAng.y)
-        if _freecamAng then
-            _freecamAng.p = math.Clamp(_freecamAng.p + dp, -89, 89)
-            _freecamAng.y = math.NormalizeAngle(_freecamAng.y + dy)
-            _freecamAng.r = 0
-        end
-    end
-    _freecamPrevCmdAng = Angle(cmdAng.p, cmdAng.y, 0)
 
     -- Zero movement and lock the cmd to the frozen body angle
     cmd:SetForwardMove(0)
@@ -3303,7 +3316,7 @@ local KERO_ASCII = [[
  | |/ / / _ \| '__/ _ \/ __/ / _ \ '_ \ / _ \
  | ' < |  __/| | | (_) \__ \|  __/ | | |  __/
  |_|\_\ \___||_|  \___/|___/ \___|_| |_|\___|
-                                        v1.57
+                                        v1.58
 ]]
 
 local function PrintKeroBanner()
@@ -3311,7 +3324,7 @@ local function PrintKeroBanner()
 end
 
 local function KeroNotifDRP(text, notifType, duration)
-    text = string.Replace(text, "Kerosene v1.57", "Kerosene " .. KERO_VERSION)
+    text = string.Replace(text, "Kerosene v1.58", "Kerosene " .. KERO_VERSION)
     notifType = notifType or NOTIFY_HINT
     duration  = duration  or 5
     if GAMEMODE and GAMEMODE.Notify then
@@ -3340,7 +3353,7 @@ end)
 
 timer.Simple(0.5, function()
     surface.PlaySound("ambient/water/drip1.wav")
-    KeroNotifDRP("Kerosene v1.57 loaded — press " .. menuKeyName .. " to open.", NOTIFY_HINT, 6)
+    KeroNotifDRP("Kerosene v1.58 loaded — press " .. menuKeyName .. " to open.", NOTIFY_HINT, 6)
 
     local files, _ = file.Find("kero_*.txt", "DATA")
     if files and #files > 0 then
@@ -3411,7 +3424,7 @@ local function PassesSuitFilter(ply)
 end
 
 -- ════════════════════════════════════════════════
---  Aimbot v0.90 — Aquarium-derived implementation
+--  Aimbot v1.58 — Aquarium-derived implementation
 --
 --  Visibility: multi-point TraceHull check (head,
 --    chest, feet, sides) so targets behind walls
@@ -3422,12 +3435,12 @@ end
 --    visible target within FOV. Angle is stamped
 --    into CreateMove each tick so the server sees it.
 --
---  Silent mode (from Aquarium):
+--  Activation modes:
 --    Tracks real mouse movement via the realAng
 --    accumulator so your crosshair never visually
 --    moves.  On each tick where MOUSE_LEFT is held
 --    AND a visible target is within FOV, the cmd
---    angle is silently redirected to the target.
+--    angle is redirected to the target.
 --    Camera angle is NEVER touched.
 -- ════════════════════════════════════════════════
 
@@ -3686,8 +3699,7 @@ local _lastAimbotTarget = nil  -- used to detect target switches and re-seed ran
 
 hook.Add("Think", "KeroAimbotThink", function()
     if not options.Combat.CombatOption1
-    or not aimbotKeyDown
-    or (options.Combat.CameraSilentMode or "Camera") ~= "Camera" then
+    or not aimbotKeyDown then
         _cam_angle = nil
         _cam_base  = nil
         return
@@ -3737,93 +3749,16 @@ hook.Add("Think", "KeroAimbotThink", function()
     lp:SetEyeAngles(newAng)
 end)
 
--- ── Silent aimbot — eye-angle delta tracker ────────────────────────────
+-- ── Aimbot input — eye-angle delta tracker ────────────────────────────
 -- Instead of trying to reconstruct the view angle from raw mouse deltas
 -- (which causes jitter due to sensitivity mismatch), we track the actual
 -- eye angle change between ticks. This keeps the visual camera perfectly
--- smooth while silently redirecting the cmd angle to the target on fire.
-local _realAng     = nil   -- the "true" view angle the player thinks they have
-local _prevEyeAng  = nil   -- eye angle from last frame, for delta tracking
-
+-- smooth while redirecting the cmd angle to the tracked target.
 hook.Add("CreateMove", "KeroCameraAimbot", function(cmd)
-    if not options.Combat.CombatOption1 then
-        _realAng    = nil
-        _prevEyeAng = nil
-        return
-    end
+    if not options.Combat.CombatOption1 then return end
 
-    local mode = options.Combat.CameraSilentMode or "Camera"
-
-    if mode == "Camera" then
-        -- Stamp the smoothed camera angle into the usercmd
-        _realAng    = nil
-        _prevEyeAng = nil
-        if aimbotKeyDown and _cam_angle then
-            cmd:SetViewAngles(_cam_angle)
-        end
-
-    elseif mode == "Silent" then
-        local lp = LocalPlayer()
-        if not IsValid(lp) then return end
-
-        local curEye = lp:EyeAngles()
-
-        -- Initialise on first tick
-        if not _realAng then
-            _realAng    = Angle(curEye.p, curEye.y, 0)
-            _prevEyeAng = Angle(curEye.p, curEye.y, 0)
-            cmd:SetViewAngles(_realAng)
-            return
-        end
-
-        -- Skip garbled first cmd
-        if cmd:CommandNumber() == 0 then
-            _prevEyeAng = Angle(curEye.p, curEye.y, 0)
-            cmd:SetViewAngles(_realAng)
-            return
-        end
-
-        -- Accumulate the real delta from actual eye-angle change (smooth, no sensitivity assumptions)
-        local dp = math.AngleDifference(curEye.p, _prevEyeAng.p)
-        local dy = math.AngleDifference(curEye.y, _prevEyeAng.y)
-        _prevEyeAng = Angle(curEye.p, curEye.y, 0)
-
-        _realAng.p = math.Clamp(math.NormalizeAngle(_realAng.p + dp), -89, 89)
-        _realAng.y = math.NormalizeAngle(_realAng.y + dy)
-        _realAng.r = 0
-
-        -- Only redirect when the aimbot key is held and MOUSE_LEFT is firing
-        local firing = input.IsMouseDown(MOUSE_LEFT)
-        if not (aimbotKeyDown and firing) then
-            cmd:SetViewAngles(_realAng)
-            return
-        end
-
-        -- Hit-chance gate
-        local hitChance = options.Combat.CombatOption2 or 100
-        if math.random(100) > hitChance then
-            cmd:SetViewAngles(_realAng)
-            return
-        end
-
-        if not lp:Alive() then
-            cmd:SetViewAngles(_realAng)
-            return
-        end
-
-        local target = GetBestTarget()
-        if not IsValid(target) then
-            cmd:SetViewAngles(_realAng)
-            return
-        end
-
-        -- Silently aim at the target bone — camera angle unchanged
-        local aimPos    = GetAimWorldPos(target)
-        local silentAng = (aimPos - lp:EyePos()):Angle()
-        silentAng.r     = 0
-        cmd:SetViewAngles(silentAng)
-        cmd:SetMouseX(0)
-        cmd:SetMouseY(0)
+    if aimbotKeyDown and _cam_angle then
+        cmd:SetViewAngles(_cam_angle)
     end
 end)
 
@@ -4694,7 +4629,7 @@ KeroAntiSpyApply = function(enable)
             end
         end)
 
-        -- Spike non-main render targets (fails silent screengrabs)
+        -- Spike non-main render targets (fails background screengrabs)
         hook.Add("PreRender", "KeroAntiSpyRenderSpike", function()
             local rt = render.GetRenderTarget()
             if rt and rt:GetName() and rt:GetName() ~= "_rt_FullFrameFB" then
@@ -4714,6 +4649,8 @@ KeroAntiSpyApply = function(enable)
             KeroDrawSuitHealth=true, KeroWeaponChams=true, KeroArmChams=true,
             KeroHitsound=true, KeroFullbrightThink=true, KeroFullbright=true,
             KeroFOVChange=true, KeroAspectRatio=true, KeroCombatCheckHUD=true,
+            KeroFreecamKeyThink=true, KeroFreecamMove=true,
+            KeroFreecamMouseLook=true, KeroFreecamFreeze=true,
             ToggleKeroMenu=true, KeroPanicKeyThink=true, KeroWhitelistBoot=true,
             -- Anti-spy's own hooks
             KeroAntiSpyBind=true, KeroAntiSpyRenderSpike=true,
@@ -4756,7 +4693,7 @@ local function KeroWhitelistStart()
     local url = KeroWhitelistResolveURL(KERO_WHITELIST.url)
     if url == "" or string.find(url, "PASTE_RAW_WHITELIST_URL_HERE", 1, true) then
         keroWhitelistState.checked = true
-        KeroWhitelistNotify("Whitelist URL is not configured. Edit KERO_WHITELIST.url in v1.lua.", NOTIFY_ERROR, 10)
+        KeroWhitelistNotify("Whitelist URL is not configured. Edit KERO_WHITELIST.url in v158.lua.", NOTIFY_ERROR, 10)
         hook.Remove("Think", "KeroWhitelistBoot")
         return
     end
