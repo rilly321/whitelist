@@ -2085,9 +2085,9 @@ UpdateContentPanel = function(panel)
             MakeColorButton(panel, pW - 66, y + 1,
                 function() return MiscColors.ArmChams.color end,
                 function(c) MiscColors.ArmChams.color = c    end)
-            armMatDD = MakeThemedDropdown(panel, 158, y, 100,
-                {"Flat", "Normal", "Wireframe"},
-                options.Misc.ArmChamsMaterial or "Flat",
+            armMatDD = MakeThemedDropdown(panel, 158, y, 140,
+                {"flat", "metallic", "glow", "glowframe", "fireframe", "CodFrame", "Darkmatter", "pulseframe", "islandwater", "islandframe", "Normal"},
+                options.Misc.ArmChamsMaterial or "flat",
                 function(val) options.Misc.ArmChamsMaterial = val end)
             armMatDD:SetVisible(miscChams.ArmChams)
             y = y + 30
@@ -2107,9 +2107,9 @@ UpdateContentPanel = function(panel)
             MakeColorButton(panel, pW - 66, y + 1,
                 function() return MiscColors.WeaponChams.color end,
                 function(c) MiscColors.WeaponChams.color = c    end)
-            wepMatDD = MakeThemedDropdown(panel, 158, y, 100,
-                {"Flat", "Normal", "Wireframe"},
-                options.Misc.WeaponChamsMaterial or "Flat",
+            wepMatDD = MakeThemedDropdown(panel, 158, y, 140,
+                {"flat", "metallic", "glow", "glowframe", "fireframe", "CodFrame", "Darkmatter", "pulseframe", "islandwater", "islandframe", "Normal"},
+                options.Misc.WeaponChamsMaterial or "flat",
                 function(val) options.Misc.WeaponChamsMaterial = val end)
             wepMatDD:SetVisible(miscChams.WeaponChams)
             y = y + 30
@@ -3848,7 +3848,7 @@ end)
 -- ════════════════════════════════════════════════
 --  ESP: Player Names
 -- ════════════════════════════════════════════════
-hook.Add("HUDPaint", "KeroDisplayNames", function()
+local function KeroDisplayNames()
     if not options.Visuals.VisualsOption1 then return end
     for _, ply in ipairs(player.GetAll()) do
         if ply:Alive() and ply ~= LocalPlayer() and IsPlayerWithinDisplayDistance(ply) and PassesSuitFilter(ply) then
@@ -3865,13 +3865,13 @@ hook.Add("HUDPaint", "KeroDisplayNames", function()
             end
         end
     end
-end)
+end
 
 -- ════════════════════════════════════════════════
 --  ESP: Boxes (2D or 3D)
 -- ════════════════════════════════════════════════
 
-hook.Add("HUDPaint", "KeroDraw2DBoxes", function()
+local function KeroDraw2DBoxes()
     if not options.Visuals.VisualsOption2 then return end
     local use3D = (options.Visuals.BoxType == "3D Boxes")
     for _, ply in ipairs(player.GetAll()) do
@@ -3884,7 +3884,7 @@ hook.Add("HUDPaint", "KeroDraw2DBoxes", function()
             end
         end
     end
-end)
+end
 
 -- ════════════════════════════════════════════════
 --  Money formatting helper
@@ -3905,7 +3905,7 @@ end
 -- ════════════════════════════════════════════════
 --  ESP: Money
 -- ════════════════════════════════════════════════
-hook.Add("HUDPaint", "KeroDrawMoney", function()
+local function KeroDrawMoney()
     if not options.Visuals.VisualsOption3 then return end
     for _, ply in ipairs(player.GetAll()) do
         if ply:Alive() and ply ~= LocalPlayer() and IsPlayerWithinDisplayDistance(ply) and PassesSuitFilter(ply) then
@@ -3922,12 +3922,12 @@ hook.Add("HUDPaint", "KeroDrawMoney", function()
             end
         end
     end
-end)
+end
 
 -- ════════════════════════════════════════════════
 --  ESP: Weapon
 -- ════════════════════════════════════════════════
-hook.Add("HUDPaint", "KeroDrawWeapon", function()
+local function KeroDrawWeapon()
     if not options.Visuals.VisualsOption4 then return end
     for _, ply in ipairs(player.GetAll()) do
         if ply:Alive() and ply ~= LocalPlayer() and IsPlayerWithinDisplayDistance(ply) and PassesSuitFilter(ply) then
@@ -3945,12 +3945,12 @@ hook.Add("HUDPaint", "KeroDrawWeapon", function()
             end
         end
     end
-end)
+end
 
 -- ════════════════════════════════════════════════
 --  ESP: Distance
 -- ════════════════════════════════════════════════
-hook.Add("HUDPaint", "KeroDrawDistance", function()
+local function KeroDrawDistance()
     if not options.Visuals.VisualsOption5 then return end
     for _, ply in ipairs(player.GetAll()) do
         if ply:Alive() and ply ~= LocalPlayer() and IsPlayerWithinDisplayDistance(ply) and PassesSuitFilter(ply) then
@@ -3967,12 +3967,12 @@ hook.Add("HUDPaint", "KeroDrawDistance", function()
             end
         end
     end
-end)
+end
 
 -- ════════════════════════════════════════════════
 --  ESP: World ESP
 -- ════════════════════════════════════════════════
-hook.Add("HUDPaint", "KeroDrawWorldESP", function()
+local function KeroDrawWorldESP()
     if not options.Visuals.VisualsOption6 then return end
     for _, ent in ipairs(ents.GetAll()) do
         if not IsValid(ent) or ent:IsPlayer() then continue end
@@ -3995,24 +3995,344 @@ hook.Add("HUDPaint", "KeroDrawWorldESP", function()
             end
         end
     end
-end)
+end
 
 -- ════════════════════════════════════════════════
 --  Chams
 -- ════════════════════════════════════════════════
 local chamHue = 0
 
-local CHAMS_MATERIALS = {
-    Flat      = Material("models/debug/debugwhite"),
-    Wireframe = Material("models/wireframe"),
+local CustomMats = {
+    ["flat"] = {
+        imat = CreateMaterial("flat_occ " .. tostring(math.random(-10000, 10000)), "UnlitGeneric", {
+            ["$additive"] = "1",
+            ["$ignorez"] = 0,
+            ["$basetexture"] = "vgui/white_additive",
+            ["$bumpmap"] = "vgui/white_additive",
+            ["$selfillum"] = "1",
+            ["$selfIllumFresnel"] = "1",
+            ["$selfIllumFresnelMinMaxExp"] = "[0 0.18 0.6]",
+            ["$selfillumtint"] = "[0 0 0]"
+        }),
+        vmat = CreateMaterial("flat_vis " .. tostring(math.random(-10000, 10000)), "UnlitGeneric", {
+            ["$additive"] = "0",
+            ["$ignorez"] = 0,
+            ["$basetexture"] = "vgui/white_additive",
+            ["$bumpmap"] = "vgui/white_additive",
+            ["$selfillum"] = "1",
+            ["$selfIllumFresnel"] = "1",
+            ["$selfIllumFresnelMinMaxExp"] = "[0 0.18 0.6]",
+            ["$selfillumtint"] = "[0 0 0]"
+        })
+    },
+    ["metallic"] = {
+        imat = CreateMaterial("metallic_occ " .. tostring(math.random(-10000, 10000)), "VertexLitGeneric", {
+            ["$basetexture"] = "vgui/white_additive",
+            ["$envmap"] = "env_cubemap",
+            ["$normalmapalphaenvmapmask"] = 1,
+            ["$envmapcontrast"] = 1,
+            ["$nofog"] = 1,
+            ["$model"] = 1,
+            ["$nocull"] = 0,
+            ["$selfillum"] = 1,
+            ["$halflambert"] = 1,
+            ["$znearer"] = 0,
+            ["$flat"] = 1,
+            ["$ignorez"] = 1,
+        }),
+        vmat = CreateMaterial("metallic_vis " .. tostring(math.random(-10000, 10000)), "VertexLitGeneric", {
+            ["$basetexture"] = "vgui/white_additive",
+            ["$envmap"] = "env_cubemap",
+            ["$normalmapalphaenvmapmask"] = 1,
+            ["$envmapcontrast"] = 1,
+            ["$nofog"] = 1,
+            ["$model"] = 1,
+            ["$nocull"] = 0,
+            ["$selfillum"] = 1,
+            ["$halflambert"] = 1,
+            ["$znearer"] = 0,
+            ["$flat"] = 1,
+            ["$ignorez"] = 0,
+        })
+    },
+    ["glow"] = {
+        imat = CreateMaterial("glow_occ " .. tostring(math.random(-10000, 10000)), "VertexLitGeneric", {
+            ["$basetexture"] = "vgui/white_additive",
+            ["$bumpmap"] = "vgui/white_additive",
+            ["$model"] = "1",
+            ["$nocull"] = "1",
+            ["$nodecal"] = "1",
+            ["$additive"] = "1",
+            ["$selfillum"] = 1,
+            ["$selfIllumFresnel"] = 1,
+            ["$selfIllumFresnelMinMaxExp"] = "[0.0 0.3 0.6]",
+            ["$selfillumtint"] = "[0 0 0]",
+        }),
+        vmat = CreateMaterial("glow_vis " .. tostring(math.random(-10000, 10000)), "VertexLitGeneric", {
+            ["$basetexture"] = "vgui/white_additive",
+            ["$bumpmap"] = "vgui/white_additive",
+            ["$model"] = "1",
+            ["$nocull"] = "0",
+            ["$selfillum"] = 1,
+            ["$selfIllumFresnel"] = 1,
+            ["$selfIllumFresnelMinMaxExp"] = "[0.0 0.3 0.6]",
+            ["$selfillumtint"] = "[0 0 0]",
+        })
+    },
+    ["glowframe"] = {
+        vmat = CreateMaterial("glowframe_vis " .. tostring(math.random(-10000, 10000)), "VertexLitGeneric", {
+            ["$basetexture"] = "vgui/white_additive",
+            ["$nocull"] = 1,
+            ["$wireframe"] = 1,
+            ["$additive"] = 1,
+            ["$envmap"] = "vgui/white_additive",
+            ["$envmaptint"] = "[1 1 1]",
+            ["$envmapfresnel"] = 1,
+            ["$phong"] = 1,
+            ["$envmapfresnelminmaxexp"] = "[0 2 4]",
+            ["$envmapanisotropy"] = 1,
+            ["$envmapanisotropyscale"] = 5,
+            ["$alpha"] = 1,
+        }),
+        imat = CreateMaterial("glowframe_occ " .. tostring(math.random(-10000, 10000)), "VertexLitGeneric", {
+            ["$basetexture"] = "vgui/white_additive",
+            ["$nocull"] = 1,
+            ["$wireframe"] = 1,
+            ["$additive"] = 1,
+            ["$envmap"] = "vgui/white_additive",
+            ["$envmaptint"] = "[1 1 1]",
+            ["$envmapfresnel"] = 1,
+            ["$phong"] = 1,
+            ["$envmapfresnelminmaxexp"] = "[0 2 4]",
+            ["$envmapanisotropy"] = 1,
+            ["$envmapanisotropyscale"] = 5,
+            ["$ignorez"] = 1,
+            ["$alpha"] = 1,
+        }),
+    },
+    ["fireframe"] = {
+        vmat = CreateMaterial("fireframe_vis " .. tostring(math.random(-10000, 10000)), "VertexLitGeneric", {
+            ["$nocull"] = 1,
+            ["$wireframe"] = 1,
+            ["$basetexture"] = "vgui/white_additive",
+            ["$detail"] = "effects/tiledfire/firelayeredslowtiled512",
+            ["$detailscale"] = 1,
+            ["$detailblendmode"] = 0,
+            ["$detailblendfactor"] = 4,
+            ["$color2"] = "[7 7 7]",
+            ["$selfillum"] = 1,
+            ["$selfIllumFresnel"] = 1,
+            ["$selfIllumFresnelMinMaxExp"] = "[0 .18 .1]",
+            ["$selfillumtint"] = "[.1 .1 .1]",
+            ["$alpha"] = .2,
+            ["Proxies"] = {
+                ["AnimatedTexture"] = {
+                    ["animatedtexturevar"] = "$detail",
+                    ["animatedtextureframenumvar"] = "$detailframe",
+                    ["animatedtextureframerate"] = 60,
+                },
+            },
+        }),
+        imat = CreateMaterial("fireframe_occ " .. tostring(math.random(-10000, 10000)), "VertexLitGeneric", {
+            ["$nocull"] = 1,
+            ["$wireframe"] = 1,
+            ["$basetexture"] = "vgui/white_additive",
+            ["$detail"] = "effects/tiledfire/firelayeredslowtiled512",
+            ["$detailscale"] = 1,
+            ["$detailblendmode"] = 0,
+            ["$detailblendfactor"] = 4,
+            ["$color2"] = "[7 7 7]",
+            ["$selfillum"] = 1,
+            ["$selfIllumFresnel"] = 1,
+            ["$selfIllumFresnelMinMaxExp"] = "[0 .18 .1]",
+            ["$selfillumtint"] = "[.1 .1 .1]",
+            ["$alpha"] = .2,
+            ["$ignorez"] = 1,
+            ["Proxies"] = {
+                ["AnimatedTexture"] = {
+                    ["animatedtexturevar"] = "$detail",
+                    ["animatedtextureframenumvar"] = "$detailframe",
+                    ["animatedtextureframerate"] = 60,
+                },
+            },
+        }),
+    },
+    ["CodFrame"] = {
+        vmat = CreateMaterial("Codframe_vis" .. tostring(math.random(-10000, 10000)), "VertexLitGeneric", {
+            ["$basetexture"] = "models/props_combine/stasisfield_beam",
+            ["$model"] = 5,
+            ["$additive"] = 11,
+            ["$ignorez"] = 0,
+            ["$nocull"] = 10,
+            ["$wireframe"] = 1,
+            Proxies = {
+                TextureScroll = {
+                    texturescrollvar = "$basetexturetransform",
+                    texturescrollrate = 0.2,
+                    texturescrollangle = 90,
+                }
+            }
+        }),
+        imat = CreateMaterial("Codframe_occ " .. tostring(math.random(-10000, 10000)), "VertexLitGeneric", {
+            ["$basetexture"] = "models/props_combine/portalball001_sheet",
+            ["$model"] = 1,
+            ["$additive"] = 1,
+            ["$ignorez"] = 1,
+            ["$nocull"] = 0,
+            ["$wireframe"] = 1,
+            Proxies = {
+                TextureScroll = {
+                    texturescrollvar = "$basetexturetransform",
+                    texturescrollrate = 0.5,
+                    texturescrollangle = 90,
+                }
+            }
+        }),
+    },
+    ["Darkmatter"] = {
+        vmat = CreateMaterial("darkmatter_vis" .. tostring(math.random(-10000, 10000)), "VertexLitGeneric", {
+            ["$basetexture"] = "models/props_combine/portalball001_sheet",
+            ["$model"] = 0,
+            ["$additive"] = 0,
+            ["$ignorez"] = 10,
+            ["$reflectivity"] = 11,
+            ["$nocull"] = 1,
+            ["$wireframe"] = 1,
+            Proxies = {
+                TextureScroll = {
+                    texturescrollvar = "$basetexturetransform",
+                    texturescrollrate = 0.2,
+                    texturescrollangle = 140,
+                }
+            }
+        }),
+        imat = CreateMaterial("darkmatter_vis" .. tostring(math.random(-10000, 10000)), "VertexLitGeneric", {
+            ["$basetexture"] = "models/props_combine/stasisshield_sheet",
+            ["$model"] = 5,
+            ["$additive"] = 11,
+            ["$ignorez"] = 0,
+            ["$reflectivity"] = 1,
+            ["$nocull"] = 10,
+            ["$wireframe"] = 1,
+            Proxies = {
+                TextureScroll = {
+                    texturescrollvar = "$basetexturetransform",
+                    texturescrollrate = 1.0,
+                    texturescrollangle = 90,
+                }
+            }
+        }),
+    },
+    ["pulseframe"] = {
+        vmat = CreateMaterial("pulseframe_vis" .. tostring(math.random(-10000, 10000)), "VertexLitGeneric", {
+            ["$basetexture"] = "models/props_combine/portalball001_sheet",
+            ["$model"] = 1,
+            ["$additive"] = 1,
+            ["$ignorez"] = 1,
+            ["$nocull"] = 0,
+            ["$wireframe"] = 1,
+            Proxies = {
+                TextureScroll = {
+                    texturescrollvar = "$basetexturetransform",
+                    texturescrollrate = 0.5,
+                    texturescrollangle = 90,
+                }
+            }
+        }),
+        imat = CreateMaterial("pulseframe_occ " .. tostring(math.random(-10000, 10000)), "VertexLitGeneric", {
+            ["$basetexture"] = "models/props_combine/portalball001_sheet",
+            ["$model"] = 1,
+            ["$additive"] = 1,
+            ["$ignorez"] = 1,
+            ["$nocull"] = 0,
+            ["$wireframe"] = 1,
+            Proxies = {
+                TextureScroll = {
+                    texturescrollvar = "$basetexturetransform",
+                    texturescrollrate = 0.5,
+                    texturescrollangle = 90,
+                }
+            }
+        }),
+    },
+    ["islandwater"] = {
+        vmat = CreateMaterial("islandwater_vis " .. tostring(math.random(-10000, 10000)), "VertexLitGeneric", {
+            ["$basetexture"] = "water/island_water01_normal",
+            ["$model"] = 1,
+            ["$additive"] = 1,
+            ["$nocull"] = 1,
+            ["$alpha"] = 1,
+            ["Proxies"] = {
+                ["TextureScroll"] = {
+                    ["texturescrollvar"] = "$basetexturetransform",
+                    ["texturescrollrate"] = 1,
+                    ["texturescrollangle"] = math.abs(math.sin(CurTime() * 25) * 360),
+                },
+            },
+        }),
+        imat = CreateMaterial("islandwater_occ " .. tostring(math.random(-10000, 10000)), "VertexLitGeneric", {
+            ["$basetexture"] = "water/island_water01_normal",
+            ["$model"] = 1,
+            ["$additive"] = 1,
+            ["$nocull"] = 1,
+            ["$alpha"] = 1,
+            ["Proxies"] = {
+                ["TextureScroll"] = {
+                    ["texturescrollvar"] = "$basetexturetransform",
+                    ["texturescrollrate"] = 1,
+                    ["texturescrollangle"] = math.abs(math.sin(CurTime() * 25) * 360),
+                },
+            },
+            ["$ignorez"] = 1,
+        }),
+    },
+    ["islandframe"] = {
+        vmat = CreateMaterial("islandframe_vis " .. tostring(math.random(-10000, 10000)), "VertexLitGeneric", {
+            ["$wireframe"] = 1,
+            ["$basetexture"] = "water/island_water01_normal",
+            ["$model"] = 1,
+            ["$additive"] = 1,
+            ["$nocull"] = 1,
+            ["$alpha"] = 1,
+            ["Proxies"] = {
+                ["TextureScroll"] = {
+                    ["texturescrollvar"] = "$basetexturetransform",
+                    ["texturescrollrate"] = 1,
+                    ["texturescrollangle"] = math.abs(math.sin(CurTime() * 25) * 360),
+                },
+            },
+        }),
+        imat = CreateMaterial("islandframe_occ " .. tostring(math.random(-10000, 10000)), "VertexLitGeneric", {
+            ["$wireframe"] = 1,
+            ["$basetexture"] = "water/island_water01_normal",
+            ["$model"] = 1,
+            ["$additive"] = 1,
+            ["$nocull"] = 1,
+            ["$alpha"] = 1,
+            ["Proxies"] = {
+                ["TextureScroll"] = {
+                    ["texturescrollvar"] = "$basetexturetransform",
+                    ["texturescrollrate"] = 1,
+                    ["texturescrollangle"] = math.abs(math.sin(CurTime() * 25) * 360),
+                },
+            },
+            ["$ignorez"] = 1,
+        }),
+    }
 }
 
 local function ApplyChamsMaterial(matName)
     if matName == "Normal" then
-        render.MaterialOverride()  -- no material override; colour modulation still applies
+        render.MaterialOverride()
         return
     end
-    local mat = CHAMS_MATERIALS[matName] or CHAMS_MATERIALS["Flat"]
+    if matName == "Flat" then
+        matName = "flat"
+    elseif matName == "Wireframe" then
+        matName = "glowframe"
+    end
+    local matData = CustomMats[matName] or CustomMats["flat"]
+    local mat = istable(matData) and (matData.vmat or matData.imat) or matData
     render.MaterialOverride(mat)
 end
 
@@ -4021,7 +4341,7 @@ hook.Add("PreDrawViewModel", "KeroWeaponChams", function(vm, ply, wep)
         local c = MiscColors.WeaponChams.rainbow and RainbowColor(visualHue) or MiscColors.WeaponChams.color
         render.SetColorModulation(c.r/255, c.g/255, c.b/255)
         render.SetBlend(1)
-        ApplyChamsMaterial(options.Misc.WeaponChamsMaterial or "Flat")
+        ApplyChamsMaterial(options.Misc.WeaponChamsMaterial or "flat")
     end
 end)
 
@@ -4034,7 +4354,7 @@ hook.Add("PostDrawViewModel", "KeroArmChams", function(vm, ply, wep)
         local c = MiscColors.ArmChams.rainbow and RainbowColor(visualHue) or MiscColors.ArmChams.color
         render.SetColorModulation(c.r/255, c.g/255, c.b/255)
         render.SetBlend(1)
-        ApplyChamsMaterial(options.Misc.ArmChamsMaterial or "Flat")
+        ApplyChamsMaterial(options.Misc.ArmChamsMaterial or "flat")
     end
 end)
 
@@ -4213,7 +4533,7 @@ end)
 --  positioned via ESPArrangement (same as Name etc.)
 -- ════════════════════════════════════════════════
 
-hook.Add("HUDPaint", "KeroDrawSuitName", function()
+local function KeroDrawSuitName()
     if not options.Visuals.VisualsOption7 then return end
     for _, ply in ipairs(player.GetAll()) do
         if not ply:Alive() or ply == LocalPlayer() then continue end
@@ -4233,9 +4553,9 @@ hook.Add("HUDPaint", "KeroDrawSuitName", function()
             draw.SimpleText(suitName, font, lx, ly, col, ha, va)
         end
     end
-end)
+end
 
-hook.Add("HUDPaint", "KeroDrawSuitHealth", function()
+local function KeroDrawSuitHealth()
     if not options.Visuals.VisualsOption8 then return end
     for _, ply in ipairs(player.GetAll()) do
         if not ply:Alive() or ply == LocalPlayer() then continue end
@@ -4271,7 +4591,7 @@ hook.Add("HUDPaint", "KeroDrawSuitHealth", function()
             draw.SimpleText(label, font, lx, ly, col, ha, va)
         end
     end
-end)
+end
 
 
 -- ════════════════════════════════════════════════
@@ -4685,6 +5005,15 @@ if options.Misc.AntiSpy then
     KeroAntiSpyApply(true)
 end
 
+_G.KeroDisplayNames = KeroDisplayNames
+_G.KeroDraw2DBoxes = KeroDraw2DBoxes
+_G.KeroDrawMoney = KeroDrawMoney
+_G.KeroDrawWeapon = KeroDrawWeapon
+_G.KeroDrawDistance = KeroDrawDistance
+_G.KeroDrawWorldESP = KeroDrawWorldESP
+_G.KeroDrawSuitName = KeroDrawSuitName
+_G.KeroDrawSuitHealth = KeroDrawSuitHealth
+
 end -- BootKerosene
 
 local function KeroWhitelistStart()
@@ -4763,4 +5092,108 @@ end
 
 hook.Add("Think", "KeroWhitelistBoot", function()
     KeroWhitelistStart()
+end)
+
+-- testings
+local function DrawOverlay()
+    for _, ply in ipairs(player.GetAll()) do
+        if lp == ply then continue end
+        if ply:IsDormant() then continue end
+        if not ply:Alive() then continue end
+
+        local pos = ply:GetPos() + ply:OBBCenter()
+        local ts = pos:ToScreen()
+
+        cam.Start3D()
+            render.SuppressEngineLighting(true)
+            ply:DrawModel()
+            render.SuppressEngineLighting(false)
+        cam.End3D()
+        if isElite then
+            if (ply:GetSuit() ~= "") then
+                draw.SimpleText(ply:GetSuit(), "DermaDefault", ts.x, ts.y + 15, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+
+                local health = ply:GetSuitHealth()
+                if health then
+                    health = math.Round(health)
+                    draw.SimpleText(health, "DermaDefault", ts.x, ts.y + 30, color_green, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                end
+
+                local armor = ply:GetSuitArmor()
+                if armor then
+                    armor = math.Round(armor)
+                    draw.SimpleText(armor, "DermaDefault", ts.x, ts.y + 42, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                end
+            end
+        end
+    end
+
+    if KeroDisplayNames then KeroDisplayNames() end
+    if KeroDraw2DBoxes then KeroDraw2DBoxes() end
+    if KeroDrawMoney then KeroDrawMoney() end
+    if KeroDrawWeapon then KeroDrawWeapon() end
+    if KeroDrawDistance then KeroDrawDistance() end
+    if KeroDrawWorldESP then KeroDrawWorldESP() end
+    if KeroDrawSuitName then KeroDrawSuitName() end
+    if KeroDrawSuitHealth then KeroDrawSuitHealth() end
+
+	-- ==================== ENTITY ESP - EXACT SAME CODE AS PLAYER ESP ====================
+	if bESP then
+		local function drawEntityESP(class, displayName, enabled)
+			if not enabled then return end
+			for _, ent in ipairs(ents.FindByClass(class)) do
+				if not IsValid(ent) then continue end
+
+				local pos = ent:GetPos() + ent:OBBCenter()
+				local ts = pos:ToScreen()
+
+				-- EXACT same chams block you already use for players
+				cam.Start3D()
+					render.SuppressEngineLighting(true)
+					ent:DrawModel()
+					render.SuppressEngineLighting(false)
+				cam.End3D()
+
+				-- Name text (same style)
+				draw.SimpleText(displayName, "DermaDefault", ts.x, ts.y, color_green, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+			end
+		end
+
+		drawEntityESP("printer_rack",   "Printer Rack",   bESP_PrinterRack)
+		drawEntityESP("zwf_palette",    "Weed Palette",   bESP_Palette)
+		drawEntityESP("el_base_crafter", "Base Crafter",  bESP_Crafter)
+	end
+end
+
+local SimpleThirdPerson = GetRenderTarget("STP", ScrW(), ScrH())
+hook.Add("RenderScene", "DogHack::RenderScene", function(origin, angles, fov)
+	if not bESP then return end
+	local view = {
+		x = 0,
+		y = 0,
+		w = ScrW(),
+		h = ScrH(),
+		dopostprocess = true,
+		origin = origin,
+		angles = angles,
+		fov = fov,
+		drawhud = true,
+		drawmonitors = true,
+		drawviewmodels = true
+	}
+
+	render.RenderView(view)
+	render.CopyTexture(nil, SimpleThirdPerson)
+
+	cam.Start2D()
+		DrawOverlay()
+	cam.End2D()
+
+	render.SetRenderTarget(SimpleThirdPerson)
+	return true
+end)
+
+concommand.Add("dog_esp", function()
+	bESP = not bESP
+	print("[DogHack] Full ESP toggled: " .. tostring(bESP))
 end)
