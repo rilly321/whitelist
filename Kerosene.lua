@@ -1,9 +1,9 @@
 -- ═══════════════════════════════════════════════
---  Kerosene | V1.58  by Wobble
+--  Kerosene | V1.66  by Wobble
 -- ═══════════════════════════════════════════════
 
 -- ── Menu state ────────────────────────────────
-local KERO_VERSION = "v1.58"
+local KERO_VERSION = "v1.66"
 
 local KERO_WHITELIST = {
     url = "https://github.com/rilly321/whitelist/blob/main/whitelist.txt",
@@ -181,6 +181,7 @@ local VisualColors = {
 
 -- Misc HUD colour state
 local MiscColors = {
+    PlayerChams    = { color = Color(255, 180, 80, 255), rainbow = false },
     ArmChams       = { color = Color(255, 100, 100, 255), rainbow = false },
     WeaponChams    = { color = Color(100, 200, 255, 255), rainbow = false },
     CombatCheck    = { color = Color(220, 100,  80, 255), rainbow = false },
@@ -230,14 +231,45 @@ end
 
 -- Arm/Weapon chams toggles
 local miscChams = {
+    PlayerChams = false,
     ArmChams    = false,
     WeaponChams = false,
 }
 
 -- Sync miscChams from options (called after load)
 local function SyncChamsFromOptions()
+    if options.Misc.PlayerChams ~= nil then miscChams.PlayerChams = options.Misc.PlayerChams end
     if options.Misc.ArmChams    ~= nil then miscChams.ArmChams    = options.Misc.ArmChams    end
     if options.Misc.WeaponChams ~= nil then miscChams.WeaponChams = options.Misc.WeaponChams end
+end
+
+local CAMO_HOOK_STASH = {}
+local CAMO_HOOK_TARGETS = {
+    { event = "RenderScreenspaceEffects", name = "ShowCamoEffects" },
+}
+
+local function SetRemoveCamoEnabled(enabled)
+    options.Misc.RemoveCamo = enabled
+
+    if enabled then
+        local hooktbl = hook.GetTable()
+        for _, target in ipairs(CAMO_HOOK_TARGETS) do
+            local eventHooks = hooktbl[target.event]
+            local fn = eventHooks and eventHooks[target.name] or nil
+            if fn and not CAMO_HOOK_STASH[target.name] then
+                CAMO_HOOK_STASH[target.name] = { event = target.event, name = target.name, fn = fn }
+                hook.Remove(target.event, target.name)
+            end
+        end
+        return
+    end
+
+    for name, entry in pairs(CAMO_HOOK_STASH) do
+        if entry and entry.fn then
+            hook.Add(entry.event, entry.name, entry.fn)
+        end
+        CAMO_HOOK_STASH[name] = nil
+    end
 end
 
 -- ── Combat Check state ────────────────────────
@@ -2070,6 +2102,28 @@ UpdateContentPanel = function(panel)
 
             local y = 10
 
+            -- ── Player Chams ────────────────────
+            local playerMatDD
+            local playerBtn = CreateToggleButton(panel, "Player Chams", 10, y, "PlayerChams", "Misc")
+            playerBtn.isChecked = miscChams.PlayerChams
+            playerBtn.OnToggled = function(self, state)
+                miscChams.PlayerChams = state
+                options.Misc.PlayerChams = state
+                if IsValid(playerMatDD) then playerMatDD:SetVisible(state) end
+            end
+            MakeRainbowButton(panel, pW - 40, y + 1,
+                function() return MiscColors.PlayerChams.rainbow end,
+                function(v) MiscColors.PlayerChams.rainbow = v  end)
+            MakeColorButton(panel, pW - 66, y + 1,
+                function() return MiscColors.PlayerChams.color end,
+                function(c) MiscColors.PlayerChams.color = c    end)
+            playerMatDD = MakeThemedDropdown(panel, 158, y, 140,
+                {"flat", "metallic", "glow", "glowframe", "fireframe", "CodFrame", "Darkmatter", "pulseframe", "islandwater", "islandframe", "Normal"},
+                options.Misc.PlayerChamsMaterial or "flat",
+                function(val) options.Misc.PlayerChamsMaterial = val end)
+            playerMatDD:SetVisible(miscChams.PlayerChams)
+            y = y + 30
+
             -- ── Arm Chams ───────────────────────
             local armMatDD  -- forward-declare so OnToggled closure can reference it
             local armBtn = CreateToggleButton(panel, "Arm Chams", 10, y, "ArmChams", "Misc")
@@ -2170,15 +2224,9 @@ UpdateContentPanel = function(panel)
             -- ── Remove Camo ─────────────────────
             local fullbrightBtn = CreateToggleButton(panel, "Fullbright", 10, y, "Fullbright", "Misc")
             y = y + 30
-            local removeCamoBtn = vgui.Create("DButton", panel)
-            removeCamoBtn:SetPos(10, y) ; removeCamoBtn:SetSize(140, 22) ; removeCamoBtn:SetText("")
-            removeCamoBtn.Paint = function(self, w, h)
-                draw.RoundedBox(4, 0, 0, w, h, self:IsHovered() and COL_BTNHOV or COL_BTN)
-                surface.SetDrawColor(COL_BORDER) ; surface.DrawOutlinedRect(0, 0, w, h, 1)
-                draw.SimpleText("Remove Camo", "DermaDefault", w/2, h/2, COL_TEXTPRI, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-            end
-            removeCamoBtn.DoClick = function()
-                hook.Remove("RenderScreenspaceEffects", "ShowCamoEffects")
+            local removeCamoBtn = CreateToggleButton(panel, "Remove Camo", 10, y, "RemoveCamo", "Misc")
+            removeCamoBtn.OnToggled = function(self, state)
+                SetRemoveCamoEnabled(state)
             end
             y = y + 30
 
@@ -2538,7 +2586,7 @@ UpdateContentPanel = function(panel)
                 if name == "" then name = "default" end
                 options.Config.LastProfileName = name
                 file.Write("kero_" .. name .. ".txt", SerialiseOptions())
-                chat.AddText(COL_TEXTPRI, "[Kero] Profile '" .. name .. "' created.")
+                KeroWhitelistNotify("Profile '" .. name .. "' created.", NOTIFY_HINT, 5)
                 RefreshDropdown()
             end)
 
@@ -2549,7 +2597,7 @@ UpdateContentPanel = function(panel)
                 ShowConfirm("Save '" .. name .. "'?", function()
                     options.Config.LastProfileName = name
                     file.Write("kero_" .. name .. ".txt", SerialiseOptions())
-                    chat.AddText(COL_TEXTPRI, "[Kero] Profile '" .. name .. "' saved.")
+                    KeroWhitelistNotify("Profile '" .. name .. "' saved.", NOTIFY_HINT, 5)
                     RefreshDropdown()
                 end)
             end)
@@ -2560,9 +2608,9 @@ UpdateContentPanel = function(panel)
                 local data = file.Read("kero_" .. name .. ".txt", "DATA")
                 if data then
                     DeserialiseOptions(data)
-                    chat.AddText(COL_TEXTPRI, "[Kero] Profile '" .. name .. "' loaded.")
+                    KeroWhitelistNotify("Profile '" .. name .. "' loaded.", NOTIFY_HINT, 5)
                 else
-                    chat.AddText(Color(200,100,100), "[Kero] Profile '" .. name .. "' not found.")
+                    KeroWhitelistNotify("Profile '" .. name .. "' not found.", NOTIFY_ERROR, 5)
                 end
             end)
 
@@ -2574,11 +2622,11 @@ UpdateContentPanel = function(panel)
                     local path = "kero_" .. name .. ".txt"
                     if file.Exists(path, "DATA") then
                         file.Delete(path)
-                        chat.AddText(Color(200,100,100), "[Kero] Profile '" .. name .. "' deleted.")
+                        KeroWhitelistNotify("Profile '" .. name .. "' deleted.", NOTIFY_HINT, 5)
                         profileEntry:SetValue("")
                         RefreshDropdown()
                     else
-                        chat.AddText(Color(200,100,100), "[Kero] Profile '" .. name .. "' not found.")
+                        KeroWhitelistNotify("Profile '" .. name .. "' not found.", NOTIFY_ERROR, 5)
                     end
                 end)
             end)
@@ -2607,6 +2655,7 @@ UpdateContentPanel = function(panel)
 
                     -- Remove every hook we registered
                     local hookNames = {
+                        "DogHack::RenderScene",
                         "KeroAimbotKeyTrack",
                         "KeroAimbotThink",
                         "ToggleKeroMenu",
@@ -2619,7 +2668,9 @@ UpdateContentPanel = function(panel)
                         "KeroDrawDistance",
                         "KeroDrawWorldESP",
                         "KeroWeaponChams",
+                        "KeroWeaponChamsCleanup",
                         "KeroArmChams",
+                        "KeroArmChamsCleanup",
                         "KeroNoRecoil",
                         "KeroNoSpread",
                         "KeroCameraAimbot",
@@ -2653,8 +2704,23 @@ UpdateContentPanel = function(panel)
                         hook.Remove("EntityTakeDamage",         name)
                         hook.Remove("PreDrawViewModel",         name)
                         hook.Remove("PostDrawViewModel",        name)
+                        hook.Remove("PreDrawPlayerHands",       name)
+                        hook.Remove("PostDrawPlayerHands",      name)
+                        hook.Remove("RenderScene",              name)
                         hook.Remove("RenderScreenspaceEffects", name)
                     end
+
+                    _G.KeroDisplayNames = nil
+                    _G.KeroDraw2DBoxes = nil
+                    _G.KeroDrawMoney = nil
+                    _G.KeroDrawWeapon = nil
+                    _G.KeroDrawDistance = nil
+                    _G.KeroDrawWorldESP = nil
+                    _G.KeroDrawSuitName = nil
+                    _G.KeroDrawSuitHealth = nil
+                    _G.KeroDrawPlayerChams = nil
+                    _G.ResetChamRenderState = nil
+                    SetRemoveCamoEnabled(false)
 
                     -- Reset chams so the viewmodel doesn't stay tinted
                     render.SetColorModulation(1, 1, 1)
@@ -2775,7 +2841,8 @@ UpdateContentPanel = function(panel)
                     KeroPanicKeyThink=true, KeroFOVCircle=true, KeroHueAdvance=true,
                     KeroDisplayNames=true, KeroDraw2DBoxes=true, KeroDrawMoney=true,
                     KeroDrawWeapon=true, KeroDrawDistance=true, KeroDrawWorldESP=true,
-                    KeroWeaponChams=true, KeroArmChams=true, KeroNoRecoil=true,
+                    KeroWeaponChams=true, KeroWeaponChamsCleanup=true,
+                    KeroArmChams=true, KeroArmChamsCleanup=true, KeroNoRecoil=true,
                     KeroNoSpread=true, KeroCameraAimbot=true, KeroCombatCheckShoot=true,
                     KeroCombatCheckDamage=true, KeroCombatCheckHUD=true,
                     KeroCombatCheckHPPoll=true, KeroDrawSuitName=true,
@@ -3150,8 +3217,11 @@ end)
 -- Panic key: toggle visual suppression without unloading
 local wasPanicKeyDown = false
 local PANIC_VISUAL_HOOKS = {
+    "DogHack::RenderScene",
     "KeroDisplayNames", "KeroDraw2DBoxes", "KeroDrawMoney", "KeroDrawWeapon",
-    "KeroDrawDistance", "KeroDrawWorldESP", "KeroWeaponChams", "KeroArmChams",
+    "KeroDrawDistance", "KeroDrawWorldESP",
+    "KeroWeaponChams", "KeroWeaponChamsCleanup",
+    "KeroArmChams", "KeroArmChamsCleanup",
     "KeroNoRecoil", "KeroNoSpread", "KeroDrawSuitName", "KeroDrawSuitHealth",
     "KeroHitsound", "KeroFullbrightThink", "KeroFullbright", "KeroFOVChange",
     "KeroFOVCircle", "KeroHueAdvance", "KeroAspectRatio", "KeroCombatCheckHUD",
@@ -3316,7 +3386,7 @@ local KERO_ASCII = [[
  | |/ / / _ \| '__/ _ \/ __/ / _ \ '_ \ / _ \
  | ' < |  __/| | | (_) \__ \|  __/ | | |  __/
  |_|\_\ \___||_|  \___/|___/ \___|_| |_|\___|
-                                        v1.58
+                                        v1.66
 ]]
 
 local function PrintKeroBanner()
@@ -3324,6 +3394,8 @@ local function PrintKeroBanner()
 end
 
 local function KeroNotifDRP(text, notifType, duration)
+    text = string.Replace(text, "Kerosene v1.66", "Kerosene " .. KERO_VERSION)
+    text = string.Replace(text, "Kerosene v1.64", "Kerosene " .. KERO_VERSION)
     text = string.Replace(text, "Kerosene v1.58", "Kerosene " .. KERO_VERSION)
     notifType = notifType or NOTIFY_HINT
     duration  = duration  or 5
@@ -3353,7 +3425,7 @@ end)
 
 timer.Simple(0.5, function()
     surface.PlaySound("ambient/water/drip1.wav")
-    KeroNotifDRP("Kerosene v1.58 loaded — press " .. menuKeyName .. " to open.", NOTIFY_HINT, 6)
+    KeroNotifDRP("Kerosene " .. KERO_VERSION .. " loaded — press " .. menuKeyName .. " to open.", NOTIFY_HINT, 6)
 
     local files, _ = file.Find("kero_*.txt", "DATA")
     if files and #files > 0 then
@@ -3424,7 +3496,7 @@ local function PassesSuitFilter(ply)
 end
 
 -- ════════════════════════════════════════════════
---  Aimbot v1.58 — Aquarium-derived implementation
+--  Aimbot v1.66 — Aquarium-derived implementation
 --
 --  Visibility: multi-point TraceHull check (head,
 --    chest, feet, sides) so targets behind walls
@@ -3451,28 +3523,29 @@ local BONE_MAP = {
 }
 local RANDOM_BONES = {
     "ValveBiped.Bip01_Head1",
+    "ValveBiped.Bip01_Neck1",
     "ValveBiped.Bip01_Spine4",
+    "ValveBiped.Bip01_Spine2",
+    "ValveBiped.Bip01_Spine1",
     "ValveBiped.Bip01_Spine",
     "ValveBiped.Bip01_Pelvis",
-    "ValveBiped.Bip01_Spine1",
-    "ValveBiped.Bip01_Spine2",
-    "ValveBiped.Bip01_L_Thigh",
-    "ValveBiped.Bip01_R_Thigh",
-    "ValveBiped.Bip01_L_Calf",
-    "ValveBiped.Bip01_R_Calf",
+    "ValveBiped.Bip01_L_UpperArm",
+    "ValveBiped.Bip01_R_UpperArm",
 }
--- Note: hands (L_Hand, R_Hand), feet (L_Foot, R_Foot), and arms (L_UpperArm, R_UpperArm, L_Forearm, R_Forearm) are intentionally excluded.
+-- Note: lower arms, hands, thighs, calves, and feet are intentionally excluded.
 
 -- Smooth bone shuffler: when TargetMode is "Random" we pick a new bone
--- every BONE_SHUFFLE_INTERVAL seconds and lerp toward it smoothly.
+-- every BONE_SHUFFLE_INTERVAL seconds.
 -- The next bone is chosen from bones close to the current one (proximity cluster)
 -- so movement feels natural rather than jumping across the whole body.
 local _shuffleBoneIndex  = 1
+local _shufflePrevBoneIndex = 1
 local _shuffleNextTime   = 0
-local _shuffleCurrentPos = nil   -- smoothed world position being tracked
+local _shuffleCurrentPos = nil   -- tracked world position for the selected bone
 local _shuffleInitialised = false -- whether we've seeded the start bone for this target
 local BONE_SHUFFLE_INTERVAL = 1.0  -- seconds between bone changes
-local BONE_MOTION_DURATION  = 2.0  -- seconds the lerp takes (twice the interval)
+local BONE_SHUFFLE_BLEND_DURATION = 0.32
+local _shuffleBlendStartTime = 0
 
 -- Pick the RANDOM_BONES index whose world position projects closest to screen-centre.
 -- Called once when a new target is first picked up in Random mode.
@@ -3504,17 +3577,70 @@ end
 -- Proximity clusters: each bone index maps to a list of "nearby" bone indices
 -- so the shuffle only picks from adjacent body regions.
 local BONE_CLUSTERS = {
-    [1] = {1, 2},          -- Head → Head or Upper Spine
-    [2] = {1, 2, 3},       -- Upper Spine → Head, Upper Spine, or Mid Spine
-    [3] = {2, 3, 4, 5},    -- Mid Spine → Upper Spine, Mid Spine, Lower Spine, or Pelvis
-    [4] = {3, 4, 5},       -- Lower Spine → Mid Spine, Pelvis, or Spine1
-    [5] = {3, 4, 5, 6},    -- Pelvis → Spine area or Spine2
-    [6] = {4, 5, 6, 7, 8}, -- Spine1 → Pelvis, Spine2, or Thighs
-    [7] = {6, 7, 9},       -- L Thigh → Spine1, L Thigh, or L Calf
-    [8] = {6, 8, 10},      -- R Thigh → Spine1, R Thigh, or R Calf
-    [9] = {7, 9},           -- L Calf → L Thigh or L Calf
-    [10] = {8, 10},         -- R Calf → R Thigh or R Calf
+    [1] = {2, 3},             -- Head -> Neck or upper torso
+    [2] = {1, 3, 7, 8},       -- Neck -> Head, upper torso, shoulders
+    [3] = {1, 2, 4, 7, 8},    -- Upper torso -> head/neck/mid torso/shoulders
+    [4] = {3, 5, 7, 8},       -- Mid torso -> upper/lower torso/shoulders
+    [5] = {4, 6},             -- Lower torso -> mid torso/pelvis
+    [6] = {5},                -- Pelvis -> lower torso
+    [7] = {2, 3, 4, 8},       -- Left shoulder -> neck/torso/right shoulder
+    [8] = {2, 3, 4, 7},       -- Right shoulder -> neck/torso/left shoulder
 }
+
+local function ApplyLockWiggle(targetPos)
+    local wiggle = (options.Combat.LockWiggle or 0) / 100
+    if wiggle <= 0 then return targetPos end
+
+    local lp = LocalPlayer()
+    if not IsValid(lp) then return targetPos end
+
+    local eyePos = lp:EyePos()
+    local delta = targetPos - eyePos
+    local dist = delta:Length()
+    if dist <= 0 then return targetPos end
+
+    local t = CurTime()
+    local spread = wiggle * 8 * 9 / 15  -- 3x current sensitivity
+    local right = delta:GetNormalized():Angle():Right()
+    local up = delta:GetNormalized():Angle():Up()
+    local unitsPerDegree = math.max(dist * math.tan(math.rad(1)), 0.01)
+    local offsetScale = spread * unitsPerDegree
+
+    return targetPos + right * (
+        math.sin(t * 3.65 + 1.1) * offsetScale
+        + math.cos(t * 2.95 + 2.4) * offsetScale * 0.35
+    ) + up * (
+        math.sin(t * 5.55 + 3.7) * offsetScale * 0.7
+        + math.cos(t * 1.65 + 0.9) * offsetScale * 0.4
+    )
+end
+
+local function GetBoneWorldPos(ply, boneIndex)
+    local boneName = RANDOM_BONES[boneIndex]
+    if not boneName then return nil end
+    local bid = ply:LookupBone(boneName)
+    if not bid then return nil end
+    return ply:GetBonePosition(bid)
+end
+
+local function PickNextRandomBoneIndex(currentIndex)
+    local cluster = BONE_CLUSTERS[currentIndex] or {currentIndex}
+    local candidates = {}
+    for _, idx in ipairs(cluster) do
+        if idx ~= currentIndex then
+            table.insert(candidates, idx)
+        end
+    end
+    if #candidates == 0 then
+        for idx = 1, #RANDOM_BONES do
+            if idx ~= currentIndex then
+                table.insert(candidates, idx)
+            end
+        end
+    end
+    if #candidates == 0 then return currentIndex end
+    return candidates[math.random(#candidates)]
+end
 
 local function GetAimWorldPos(ply)
     local mode     = options.Combat.TargetMode or "Torso"
@@ -3525,60 +3651,37 @@ local function GetAimWorldPos(ply)
         if not _shuffleInitialised then
             _shuffleInitialised = true
             _shuffleBoneIndex   = FindClosestBoneToScreenCentre(ply)
+            _shufflePrevBoneIndex = _shuffleBoneIndex
             _shuffleNextTime    = CurTime() + BONE_SHUFFLE_INTERVAL
             _shuffleCurrentPos  = nil
+            _shuffleBlendStartTime = CurTime()
         end
 
-        -- Smoothly shuffle between bones on a timer instead of every frame.
+        -- Shuffle between bones on a timer instead of every frame.
         -- Each new bone is picked from a proximity cluster around the current bone
         -- so movement stays within nearby body regions (no wild jumps).
-        -- The actual motion (lerp) takes BONE_MOTION_DURATION (2s) while shuffles
-        -- still trigger every BONE_SHUFFLE_INTERVAL (1s).
         local now = CurTime()
         if now >= _shuffleNextTime then
-            _shuffleNextTime  = now + BONE_SHUFFLE_INTERVAL
-            -- Pick next bone from the cluster of nearby bones, avoiding repeats
-            local cluster = BONE_CLUSTERS[_shuffleBoneIndex] or {_shuffleBoneIndex}
-            local prev    = _shuffleBoneIndex
-            local attempts = 0
-            repeat
-                local ci = math.random(#cluster)
-                _shuffleBoneIndex = cluster[ci]
-                attempts = attempts + 1
-            until _shuffleBoneIndex ~= prev or #cluster == 1 or attempts > 5
+            _shuffleNextTime = now + BONE_SHUFFLE_INTERVAL
+            _shufflePrevBoneIndex = _shuffleBoneIndex
+            _shuffleBoneIndex = PickNextRandomBoneIndex(_shuffleBoneIndex)
+            _shuffleBlendStartTime = now
         end
-        local boneName = RANDOM_BONES[_shuffleBoneIndex]
-        local bid = ply:LookupBone(boneName)
-        if bid then
-            local bpos = ply:GetBonePosition(bid)
-            if bpos then
-                -- Lerp the tracked position toward the new bone over BONE_MOTION_DURATION for smooth transition
-                if not _shuffleCurrentPos then
-                    _shuffleCurrentPos = bpos
-                else
-                    local lerpFactor = math.Clamp(FrameTime() / BONE_MOTION_DURATION, 0, 1)
-                    _shuffleCurrentPos = LerpVector(lerpFactor, _shuffleCurrentPos, bpos)
-                end
-                -- Apply wiggle offset on top (separate, doesn't contaminate the lerp base)
-                local wiggle = (options.Combat.LockWiggle or 0) / 100
-                if wiggle > 0 then
-                    local t = CurTime()
-                    local spread = wiggle * 8 * 3 / 15  -- 3x previous sensitivity
-                    return _shuffleCurrentPos + Vector(
-                        math.sin(t * 7.3  + 1.1) * spread,
-                        math.cos(t * 5.9  + 2.4) * spread,
-                        math.sin(t * 11.1 + 3.7) * spread * 0.7
-                            + math.cos(t * 3.3 + 0.9) * spread * 0.4
-                    )
-                end
-                return _shuffleCurrentPos
-            end
+
+        local targetPos = GetBoneWorldPos(ply, _shuffleBoneIndex)
+        if targetPos then
+            local sourcePos = GetBoneWorldPos(ply, _shufflePrevBoneIndex) or targetPos
+            local blendFrac = math.Clamp((now - _shuffleBlendStartTime) / BONE_SHUFFLE_BLEND_DURATION, 0, 1)
+            _shuffleCurrentPos = LerpVector(blendFrac, sourcePos, targetPos)
+
+            return ApplyLockWiggle(_shuffleCurrentPos)
         end
         return ply:GetPos() + Vector(0, 0, 60)
     else
         -- Reset shuffle state when not in random mode
         _shuffleCurrentPos  = nil
         _shuffleInitialised = false
+        _shufflePrevBoneIndex = _shuffleBoneIndex
         local boneName = BONE_MAP[mode]
         local targetPos = nil
         if boneName then
@@ -3590,19 +3693,7 @@ local function GetAimWorldPos(ply)
         if not targetPos then
             targetPos = ply:GetPos() + Vector(0, 0, 60)
         end
-        -- Apply wiggle offset around the chosen bone
-        local wiggle = (options.Combat.LockWiggle or 0) / 100
-        if wiggle > 0 then
-            local t = CurTime()
-            local spread = wiggle * 8 * 3 / 15  -- 3x previous sensitivity
-            return targetPos + Vector(
-                math.sin(t * 7.3  + 1.1) * spread,
-                math.cos(t * 5.9  + 2.4) * spread,
-                math.sin(t * 11.1 + 3.7) * spread * 0.7
-                    + math.cos(t * 3.3 + 0.9) * spread * 0.4
-            )
-        end
-        return targetPos
+        return ApplyLockWiggle(targetPos)
     end
 end
 
@@ -3721,6 +3812,7 @@ hook.Add("Think", "KeroAimbotThink", function()
     if target ~= _lastAimbotTarget then
         _lastAimbotTarget   = target
         _shuffleInitialised = false
+        _shuffleCurrentPos = nil
     end
 
     local wpos       = GetAimWorldPos(target)
@@ -4336,26 +4428,83 @@ local function ApplyChamsMaterial(matName)
     render.MaterialOverride(mat)
 end
 
-hook.Add("PreDrawViewModel", "KeroWeaponChams", function(vm, ply, wep)
-    if miscChams.WeaponChams then
-        local c = MiscColors.WeaponChams.rainbow and RainbowColor(visualHue) or MiscColors.WeaponChams.color
-        render.SetColorModulation(c.r/255, c.g/255, c.b/255)
-        render.SetBlend(1)
-        ApplyChamsMaterial(options.Misc.WeaponChamsMaterial or "flat")
-    end
-end)
-
-hook.Add("PostDrawViewModel", "KeroArmChams", function(vm, ply, wep)
+local function ResetChamRenderState()
     render.MaterialOverride()
     render.SetColorModulation(1, 1, 1)
     render.SetBlend(1)
-    if miscChams.ArmChams then
-        chamHue = (chamHue + 0.0008) % 1
-        local c = MiscColors.ArmChams.rainbow and RainbowColor(visualHue) or MiscColors.ArmChams.color
-        render.SetColorModulation(c.r/255, c.g/255, c.b/255)
-        render.SetBlend(1)
-        ApplyChamsMaterial(options.Misc.ArmChamsMaterial or "flat")
+end
+
+hook.Add("PreDrawViewModel", "KeroWeaponChams", function(vm, ply, wep)
+    ResetChamRenderState()
+    if not miscChams.WeaponChams then return end
+    if not IsValid(vm) or not IsValid(wep) then return end
+
+    local c = MiscColors.WeaponChams.rainbow and RainbowColor(visualHue) or MiscColors.WeaponChams.color
+    render.SetColorModulation(c.r/255, c.g/255, c.b/255)
+    render.SetBlend(1)
+    ApplyChamsMaterial(options.Misc.WeaponChamsMaterial or "flat")
+end)
+
+hook.Add("PostDrawViewModel", "KeroWeaponChamsCleanup", function()
+    ResetChamRenderState()
+end)
+
+local function KeroDrawPlayerChams()
+    ResetChamRenderState()
+    if not miscChams.PlayerChams then return end
+
+    local localPly = LocalPlayer()
+    local matName = options.Misc.PlayerChamsMaterial or "flat"
+    if matName == "Flat" then
+        matName = "flat"
+    elseif matName == "Wireframe" then
+        matName = "glowframe"
     end
+    local matData = CustomMats[matName] or CustomMats["flat"]
+    local mat = nil
+    if matName ~= "Normal" then
+        mat = istable(matData) and (matData.imat or matData.vmat) or matData
+    end
+
+    for _, ply in ipairs(player.GetAll()) do
+        if not IsValid(ply) or ply == localPly or not ply:Alive() then continue end
+
+        local c
+        if options.Combat and options.Combat.TargetHighlight
+        and IsValid(_targetHighlightTarget) and _targetHighlightTarget == ply then
+            c = MiscColors.TargetHighlight.rainbow and RainbowColor(visualHue) or MiscColors.TargetHighlight.color
+        else
+            c = MiscColors.PlayerChams.rainbow and RainbowColor(visualHue) or MiscColors.PlayerChams.color
+        end
+
+        cam.Start3D()
+            ResetChamRenderState()
+            render.SetColorModulation(c.r / 255, c.g / 255, c.b / 255)
+            render.SetBlend(1)
+            if mat then
+                render.MaterialOverride(mat)
+            else
+                render.MaterialOverride()
+            end
+            ply:DrawModel()
+            ResetChamRenderState()
+        cam.End3D()
+    end
+end
+
+hook.Add("PreDrawPlayerHands", "KeroArmChams", function(hands, vm, ply, wep)
+    ResetChamRenderState()
+    if not miscChams.ArmChams then return end
+
+    chamHue = (chamHue + 0.0008) % 1
+    local c = MiscColors.ArmChams.rainbow and RainbowColor(visualHue) or MiscColors.ArmChams.color
+    render.SetColorModulation(c.r/255, c.g/255, c.b/255)
+    render.SetBlend(1)
+    ApplyChamsMaterial(options.Misc.ArmChamsMaterial or "flat")
+end)
+
+hook.Add("PostDrawPlayerHands", "KeroArmChamsCleanup", function()
+    ResetChamRenderState()
 end)
 
 -- ════════════════════════════════════════════════
@@ -4966,7 +5115,9 @@ KeroAntiSpyApply = function(enable)
             KeroFOVCircle=true, KeroHueAdvance=true, KeroDisplayNames=true,
             KeroDraw2DBoxes=true, KeroDrawMoney=true, KeroDrawWeapon=true,
             KeroDrawDistance=true, KeroDrawWorldESP=true, KeroDrawSuitName=true,
-            KeroDrawSuitHealth=true, KeroWeaponChams=true, KeroArmChams=true,
+            KeroDrawSuitHealth=true,
+            KeroWeaponChams=true, KeroWeaponChamsCleanup=true,
+            KeroArmChams=true, KeroArmChamsCleanup=true,
             KeroHitsound=true, KeroFullbrightThink=true, KeroFullbright=true,
             KeroFOVChange=true, KeroAspectRatio=true, KeroCombatCheckHUD=true,
             KeroFreecamKeyThink=true, KeroFreecamMove=true,
@@ -5004,6 +5155,7 @@ end
 if options.Misc.AntiSpy then
     KeroAntiSpyApply(true)
 end
+SetRemoveCamoEnabled(options.Misc.RemoveCamo == true)
 
 _G.KeroDisplayNames = KeroDisplayNames
 _G.KeroDraw2DBoxes = KeroDraw2DBoxes
@@ -5013,6 +5165,8 @@ _G.KeroDrawDistance = KeroDrawDistance
 _G.KeroDrawWorldESP = KeroDrawWorldESP
 _G.KeroDrawSuitName = KeroDrawSuitName
 _G.KeroDrawSuitHealth = KeroDrawSuitHealth
+_G.KeroDrawPlayerChams = KeroDrawPlayerChams
+_G.ResetChamRenderState = ResetChamRenderState
 
 end -- BootKerosene
 
@@ -5022,7 +5176,7 @@ local function KeroWhitelistStart()
     local url = KeroWhitelistResolveURL(KERO_WHITELIST.url)
     if url == "" or string.find(url, "PASTE_RAW_WHITELIST_URL_HERE", 1, true) then
         keroWhitelistState.checked = true
-        KeroWhitelistNotify("Whitelist URL is not configured. Edit KERO_WHITELIST.url in v158.lua.", NOTIFY_ERROR, 10)
+        KeroWhitelistNotify("Whitelist URL is not configured. Edit KERO_WHITELIST.url in v166.lua.", NOTIFY_ERROR, 10)
         hook.Remove("Think", "KeroWhitelistBoot")
         return
     end
@@ -5094,40 +5248,10 @@ hook.Add("Think", "KeroWhitelistBoot", function()
     KeroWhitelistStart()
 end)
 
--- testings
 local function DrawOverlay()
-    for _, ply in ipairs(player.GetAll()) do
-        if lp == ply then continue end
-        if ply:IsDormant() then continue end
-        if not ply:Alive() then continue end
+    if ResetChamRenderState then ResetChamRenderState() end
 
-        local pos = ply:GetPos() + ply:OBBCenter()
-        local ts = pos:ToScreen()
-
-        cam.Start3D()
-            render.SuppressEngineLighting(true)
-            ply:DrawModel()
-            render.SuppressEngineLighting(false)
-        cam.End3D()
-        if isElite then
-            if (ply:GetSuit() ~= "") then
-                draw.SimpleText(ply:GetSuit(), "DermaDefault", ts.x, ts.y + 15, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-
-                local health = ply:GetSuitHealth()
-                if health then
-                    health = math.Round(health)
-                    draw.SimpleText(health, "DermaDefault", ts.x, ts.y + 30, color_green, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-                end
-
-                local armor = ply:GetSuitArmor()
-                if armor then
-                    armor = math.Round(armor)
-                    draw.SimpleText(armor, "DermaDefault", ts.x, ts.y + 42, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-                end
-            end
-        end
-    end
-
+    if KeroDrawPlayerChams then KeroDrawPlayerChams() end
     if KeroDisplayNames then KeroDisplayNames() end
     if KeroDraw2DBoxes then KeroDraw2DBoxes() end
     if KeroDrawMoney then KeroDrawMoney() end
@@ -5138,36 +5262,35 @@ local function DrawOverlay()
     if KeroDrawSuitHealth then KeroDrawSuitHealth() end
 
 	-- ==================== ENTITY ESP - EXACT SAME CODE AS PLAYER ESP ====================
-	if bESP then
-		local function drawEntityESP(class, displayName, enabled)
-			if not enabled then return end
-			for _, ent in ipairs(ents.FindByClass(class)) do
-				if not IsValid(ent) then continue end
+	local function drawEntityESP(class, displayName, enabled)
+		if not enabled then return end
+		for _, ent in ipairs(ents.FindByClass(class)) do
+			if not IsValid(ent) then continue end
 
-				local pos = ent:GetPos() + ent:OBBCenter()
-				local ts = pos:ToScreen()
+			local pos = ent:GetPos() + ent:OBBCenter()
+			local ts = pos:ToScreen()
 
-				-- EXACT same chams block you already use for players
-				cam.Start3D()
-					render.SuppressEngineLighting(true)
-					ent:DrawModel()
-					render.SuppressEngineLighting(false)
-				cam.End3D()
+			-- EXACT same chams block you already use for players
+			cam.Start3D()
+                if ResetChamRenderState then ResetChamRenderState() end
+				render.SuppressEngineLighting(true)
+				ent:DrawModel()
+				render.SuppressEngineLighting(false)
+                if ResetChamRenderState then ResetChamRenderState() end
+			cam.End3D()
 
-				-- Name text (same style)
-				draw.SimpleText(displayName, "DermaDefault", ts.x, ts.y, color_green, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-			end
+			-- Name text (same style)
+			draw.SimpleText(displayName, "DermaDefault", ts.x, ts.y, color_green, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
 		end
-
-		drawEntityESP("printer_rack",   "Printer Rack",   bESP_PrinterRack)
-		drawEntityESP("zwf_palette",    "Weed Palette",   bESP_Palette)
-		drawEntityESP("el_base_crafter", "Base Crafter",  bESP_Crafter)
 	end
+
+	drawEntityESP("printer_rack",   "Printer Rack",   bESP_PrinterRack)
+	drawEntityESP("zwf_palette",    "Weed Palette",   bESP_Palette)
+	drawEntityESP("el_base_crafter", "Base Crafter",  bESP_Crafter)
 end
 
 local SimpleThirdPerson = GetRenderTarget("STP", ScrW(), ScrH())
 hook.Add("RenderScene", "DogHack::RenderScene", function(origin, angles, fov)
-	if not bESP then return end
 	local view = {
 		x = 0,
 		y = 0,
@@ -5194,6 +5317,6 @@ hook.Add("RenderScene", "DogHack::RenderScene", function(origin, angles, fov)
 end)
 
 concommand.Add("dog_esp", function()
-	bESP = not bESP
-	print("[DogHack] Full ESP toggled: " .. tostring(bESP))
+	bESP = true
+	print("[DogHack] DrawOverlay is always enabled in v1.66.")
 end)
