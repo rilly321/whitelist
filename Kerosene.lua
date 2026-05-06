@@ -1,9 +1,9 @@
 -- ═══════════════════════════════════════════════
---  Kerosene | V1.66  by Wobble
+--  Kerosene | V1.70  by Wobble
 -- ═══════════════════════════════════════════════
 
 -- ── Menu state ────────────────────────────────
-local KERO_VERSION = "v1.66"
+local KERO_VERSION = "v1.70"
 
 local KERO_WHITELIST = {
     url = "https://github.com/rilly321/whitelist/blob/main/whitelist.txt",
@@ -155,6 +155,7 @@ local options = {
     Visuals = {},
     Misc    = {},
     Players = {},
+    Theme   = {},
     Config  = {}
 }
 
@@ -164,6 +165,7 @@ local optionNames = {
     Visuals = { "Name", "Boxes", "Money", "Weapon", "Distance", "World ESP", "Suit Name", "Suit Health" },
     Misc    = { "Remove Recoil", "Remove Spread", "Combat Check" },
     Players = {},
+    Theme   = {},
     Config  = {}
 }
 
@@ -449,6 +451,205 @@ local COL_BTN     = Color(26,  28,  32,  255)   -- dark control bg
 local COL_BTNHOV  = Color(36,  38,  44,  255)   -- hover state
 local COL_GREEN   = Color(75,  195, 120, 255)   -- enabled indicator
 local COL_RED     = Color(195,  65,  55, 255)   -- danger / unload
+
+local function CloneColor(c)
+    return Color(c.r, c.g, c.b, c.a)
+end
+
+local MenuPalette = {
+    BG      = CloneColor(COL_BG),
+    HEADER  = CloneColor(COL_HEADER),
+    BORDER  = CloneColor(COL_BORDER),
+    ACCENT  = CloneColor(COL_ACCENT),
+    TEXTMUT = CloneColor(COL_TEXTMUT),
+    TEXTPRI = CloneColor(COL_TEXTPRI),
+    BTN     = CloneColor(COL_BTN),
+    BTNHOV  = CloneColor(COL_BTNHOV),
+    GREEN   = CloneColor(COL_GREEN),
+    RED     = CloneColor(COL_RED),
+}
+
+local THEME_FONT_CHOICES = {
+    "Arial",
+    "Tahoma",
+    "Verdana",
+    "Trebuchet MS",
+    "Calibri",
+    "Georgia",
+    "Consolas",
+    "Lucida Console",
+}
+
+local THEME_COLOR_KEYS = {
+    "BG", "HEADER", "BORDER", "ACCENT", "TEXTMUT",
+    "TEXTPRI", "BTN", "BTNHOV", "GREEN", "RED",
+}
+
+local MENU_FONT_REG  = "KeroMenuRegular"
+local MENU_FONT_BOLD = "KeroMenuBold"
+local ESP_FONT_REG   = "KeroESPRegular"
+local ESP_FONT_BOLD  = "KeroESPBold"
+
+local function GetMenuFont(bold)
+    return bold and MENU_FONT_BOLD or MENU_FONT_REG
+end
+
+local function GetESPFont(bold)
+    return bold and ESP_FONT_BOLD or ESP_FONT_REG
+end
+
+local function ApplyMenuPalette()
+    COL_BG      = CloneColor(MenuPalette.BG)
+    COL_HEADER  = CloneColor(MenuPalette.HEADER)
+    COL_BORDER  = CloneColor(MenuPalette.BORDER)
+    COL_ACCENT  = CloneColor(MenuPalette.ACCENT)
+    COL_TEXTMUT = CloneColor(MenuPalette.TEXTMUT)
+    COL_TEXTPRI = CloneColor(MenuPalette.TEXTPRI)
+    COL_BTN     = CloneColor(MenuPalette.BTN)
+    COL_BTNHOV  = CloneColor(MenuPalette.BTNHOV)
+    COL_GREEN   = CloneColor(MenuPalette.GREEN)
+    COL_RED     = CloneColor(MenuPalette.RED)
+end
+
+local function RefreshThemeFonts()
+    local menuFamily = options.Theme.MenuFontFamily or "Tahoma"
+    local espFamily  = options.Theme.ESPFontFamily or "Tahoma"
+
+    surface.CreateFont("DermaDefault", {
+        font = menuFamily,
+        size = 14,
+        weight = 500,
+        antialias = true,
+    })
+    surface.CreateFont("DermaDefaultBold", {
+        font = menuFamily,
+        size = 14,
+        weight = 800,
+        antialias = true,
+    })
+    surface.CreateFont(MENU_FONT_REG, {
+        font = menuFamily,
+        size = 14,
+        weight = 500,
+        antialias = true,
+    })
+    surface.CreateFont(MENU_FONT_BOLD, {
+        font = menuFamily,
+        size = 14,
+        weight = 800,
+        antialias = true,
+    })
+    surface.CreateFont(ESP_FONT_REG, {
+        font = espFamily,
+        size = 15,
+        weight = 500,
+        antialias = true,
+        outline = false,
+    })
+    surface.CreateFont(ESP_FONT_BOLD, {
+        font = espFamily,
+        size = 15,
+        weight = 800,
+        antialias = true,
+        outline = false,
+    })
+end
+
+local THEME_PRESETS = {
+    ["Kerosene"] = {
+        palette = {
+            BG      = Color(14, 15, 17, 255),
+            HEADER  = Color(20, 21, 24, 255),
+            BORDER  = Color(38, 40, 45, 255),
+            ACCENT  = Color(229, 160, 40, 255),
+            TEXTMUT = Color(90, 94, 102, 255),
+            TEXTPRI = Color(210, 212, 216, 255),
+            BTN     = Color(26, 28, 32, 255),
+            BTNHOV  = Color(36, 38, 44, 255),
+            GREEN   = Color(75, 195, 120, 255),
+            RED     = Color(195, 65, 55, 255),
+        },
+        menuFont = "Tahoma",
+        espFont  = "Tahoma",
+    },
+    ["Ice"] = {
+        palette = {
+            BG      = Color(17, 24, 31, 255),
+            HEADER  = Color(24, 34, 44, 255),
+            BORDER  = Color(66, 86, 102, 255),
+            ACCENT  = Color(94, 196, 255, 255),
+            TEXTMUT = Color(137, 158, 171, 255),
+            TEXTPRI = Color(229, 240, 247, 255),
+            BTN     = Color(28, 39, 49, 255),
+            BTNHOV  = Color(39, 54, 67, 255),
+            GREEN   = Color(96, 220, 180, 255),
+            RED     = Color(220, 104, 104, 255),
+        },
+        menuFont = "Verdana",
+        espFont  = "Arial",
+    },
+    ["Crimson"] = {
+        palette = {
+            BG      = Color(28, 14, 18, 255),
+            HEADER  = Color(40, 19, 25, 255),
+            BORDER  = Color(88, 43, 52, 255),
+            ACCENT  = Color(255, 92, 92, 255),
+            TEXTMUT = Color(157, 124, 129, 255),
+            TEXTPRI = Color(248, 228, 230, 255),
+            BTN     = Color(48, 24, 30, 255),
+            BTNHOV  = Color(63, 31, 39, 255),
+            GREEN   = Color(112, 214, 147, 255),
+            RED     = Color(218, 76, 76, 255),
+        },
+        menuFont = "Georgia",
+        espFont  = "Trebuchet MS",
+    },
+    ["Terminal"] = {
+        palette = {
+            BG      = Color(10, 14, 10, 255),
+            HEADER  = Color(13, 20, 13, 255),
+            BORDER  = Color(43, 70, 43, 255),
+            ACCENT  = Color(114, 255, 114, 255),
+            TEXTMUT = Color(88, 128, 88, 255),
+            TEXTPRI = Color(208, 245, 208, 255),
+            BTN     = Color(15, 24, 15, 255),
+            BTNHOV  = Color(22, 34, 22, 255),
+            GREEN   = Color(114, 255, 114, 255),
+            RED     = Color(208, 92, 92, 255),
+        },
+        menuFont = "Consolas",
+        espFont  = "Lucida Console",
+    },
+}
+
+local function ApplyThemePreset(name)
+    local preset = THEME_PRESETS[name]
+    if not preset then return end
+
+    for key, col in pairs(preset.palette) do
+        if MenuPalette[key] then
+            MenuPalette[key] = CloneColor(col)
+        end
+    end
+
+    options.Theme.MenuFontFamily = preset.menuFont
+    options.Theme.ESPFontFamily = preset.espFont
+    options.Theme.Preset = name
+
+    ApplyMenuPalette()
+    RefreshThemeFonts()
+end
+
+local function ApplyCurrentTheme()
+    ApplyMenuPalette()
+    RefreshThemeFonts()
+end
+
+options.Theme.MenuFontFamily = options.Theme.MenuFontFamily or "Tahoma"
+options.Theme.ESPFontFamily = options.Theme.ESPFontFamily or "Tahoma"
+options.Theme.Preset = options.Theme.Preset or "Kerosene"
+
+ApplyCurrentTheme()
 
 -- ════════════════════════════════════════════════
 --  Themed colour picker
@@ -1412,6 +1613,11 @@ local function SerialiseOptions()
     for key, feat in pairs(PlayerESPColors) do
         table.insert(lines, "PCOL|"..key.."|"..ColourToStr(feat.color))
     end
+    for _, key in ipairs(THEME_COLOR_KEYS) do
+        if MenuPalette[key] then
+            table.insert(lines, "TCOL|"..key.."|"..ColourToStr(MenuPalette[key]))
+        end
+    end
     table.insert(lines, "EXTRA|lastTab|"..(currentTab or "Combat"))
     table.insert(lines, "EXTRA|menuKey|"..tostring(menuKey))
     table.insert(lines, "EXTRA|menuKeyName|"..menuKeyName)
@@ -1430,6 +1636,19 @@ local function SerialiseOptions()
     for id, state in pairs(playerStates) do
         table.insert(lines, "PSTATE|"..id.."|"..(state.friend and "1" or "0").."|"..(state.enemy and "1" or "0").."|"..(state.watch and "1" or "0"))
     end
+    return table.concat(lines, "\n")
+end
+
+local function SerialiseTheme()
+    local lines = {}
+    for _, key in ipairs(THEME_COLOR_KEYS) do
+        if MenuPalette[key] then
+            table.insert(lines, "TCOL|"..key.."|"..ColourToStr(MenuPalette[key]))
+        end
+    end
+    table.insert(lines, "THEMEOPT|MenuFontFamily|" .. tostring(options.Theme.MenuFontFamily or "Tahoma"))
+    table.insert(lines, "THEMEOPT|ESPFontFamily|" .. tostring(options.Theme.ESPFontFamily or "Tahoma"))
+    table.insert(lines, "THEMEOPT|Preset|" .. tostring(options.Theme.Preset or "Custom"))
     return table.concat(lines, "\n")
 end
 
@@ -1463,6 +1682,12 @@ local function DeserialiseOptions(str)
             if key and PlayerESPColors[key] then
                 local c = StrToColour(cs)
                 if c then PlayerESPColors[key].color = c end
+            end
+        elseif kind == "TCOL" then
+            local _, key, cs = string.match(line, "^([^|]+)|([^|]+)|(.+)")
+            if key and MenuPalette[key] then
+                local c = StrToColour(cs)
+                if c then MenuPalette[key] = c end
             end
         elseif kind == "PSTATE" then
             local _, id, friendFlag, enemyFlag, watchFlag = string.match(line, "^([^|]+)|([^|]+)|([^|]+)|([^|]+)|(.+)")
@@ -1548,6 +1773,39 @@ local function DeserialiseOptions(str)
     MigrateLegacyCombatTargets()
     RefreshCombatCheckTargets()
     SyncChamsFromOptions()
+    ApplyCurrentTheme()
+    if IsValid(contentPanel) then
+        UpdateContentPanel(contentPanel)
+        BuildSidebar()
+    end
+end
+
+local function DeserialiseTheme(str)
+    if not str or str == "" then return end
+    for line in string.gmatch(str, "[^\n]+") do
+        local kind = string.match(line, "^([^|]+)")
+        if kind == "TCOL" then
+            local _, key, cs = string.match(line, "^([^|]+)|([^|]+)|(.+)")
+            if key and MenuPalette[key] then
+                local c = StrToColour(cs)
+                if c then MenuPalette[key] = c end
+            end
+        elseif kind == "THEMEOPT" then
+            local _, key, val = string.match(line, "^([^|]+)|([^|]+)|(.+)")
+            if key == "MenuFontFamily" then
+                options.Theme.MenuFontFamily = val
+            elseif key == "ESPFontFamily" then
+                options.Theme.ESPFontFamily = val
+            elseif key == "Preset" then
+                options.Theme.Preset = val
+            end
+        end
+    end
+    ApplyCurrentTheme()
+    if IsValid(contentPanel) then
+        UpdateContentPanel(contentPanel)
+        BuildSidebar()
+    end
 end
 
 local function GetSavedConfigs()
@@ -1556,6 +1814,18 @@ local function GetSavedConfigs()
     if files then
         for _, fname in ipairs(files) do
             local name = string.match(fname, "^kero_(.+)%.txt$")
+            if name then table.insert(found, name) end
+        end
+    end
+    return found
+end
+
+local function GetSavedThemes()
+    local found = {}
+    local files, _ = file.Find("kero_theme_*.txt", "DATA")
+    if files then
+        for _, fname in ipairs(files) do
+            local name = string.match(fname, "^kero_theme_(.+)%.txt$")
             if name then table.insert(found, name) end
         end
     end
@@ -1575,6 +1845,7 @@ local ToggleKeroMenu  -- defined fully after CreateKeroMenu
 local UpdateContentPanel
 local BuildSidebar
 local WireKeroMenu
+local BuildThemePanel
 
 local function CreateKeroMenu()
     keroFrame = vgui.Create("DFrame")
@@ -1663,11 +1934,11 @@ local function CreateKeroMenu()
 
         -- Title
         surface.SetTextColor(COL_ACCENT.r, COL_ACCENT.g, COL_ACCENT.b, 255)
-        surface.SetFont("DermaDefaultBold")
+        surface.SetFont(GetMenuFont(true))
         surface.SetTextPos(14, 11)
         surface.DrawText("KEROSENE")
         surface.SetTextColor(COL_TEXTMUT.r, COL_TEXTMUT.g, COL_TEXTMUT.b, 255)
-        surface.SetFont("DermaDefault")
+        surface.SetFont(GetMenuFont(false))
         surface.SetTextPos(92, 12)
         surface.DrawText(KERO_VERSION)
         -- Sidebar divider
@@ -1709,7 +1980,7 @@ local function CreateKeroMenu()
         surface.DrawRect(0, h - FOOTER_H, w, FOOTER_H)
         surface.SetDrawColor(COL_BORDER)
         surface.DrawRect(0, h - FOOTER_H, w, 1)
-        draw.SimpleText("by Wobble", "DermaDefault", 10, h - FOOTER_H + 5, COL_TEXTMUT, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+        draw.SimpleText("by Wobble", GetMenuFont(false), 10, h - FOOTER_H + 5, COL_TEXTMUT, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
     end
 
     -- Draw sparks in PaintOver so they render above all child panels (content, sidebar, etc.)
@@ -1745,7 +2016,254 @@ end -- end CreateKeroMenu
 -- ════════════════════════════════════════════════
 --  Tab content builder  (module-level — avoids >60 upvalue limit)
 -- ════════════════════════════════════════════════
-local TABS = { "Combat", "Visuals", "Misc", "Players", "Debug", "Config" }
+local TABS = { "Combat", "Visuals", "Misc", "Players", "Debug", "Theme", "Config" }
+
+BuildThemePanel = function(panel)
+    local pW = panel:GetWide()
+    local y = 14
+
+    local function ThemeHeader(text)
+        local lbl = vgui.Create("DLabel", panel)
+        lbl:SetPos(14, y)
+        lbl:SetFont(GetMenuFont(true))
+        lbl:SetText(text)
+        lbl:SetTextColor(COL_ACCENT)
+        lbl:SizeToContents()
+        y = y + 20
+
+        local div = vgui.Create("DPanel", panel)
+        div:SetPos(14, y)
+        div:SetSize(pW - 28, 1)
+        div.Paint = function(s, w, h)
+            surface.SetDrawColor(COL_BORDER)
+            surface.DrawRect(0, 0, w, h)
+        end
+        y = y + 10
+    end
+
+    local function RefreshThemePanels()
+        ApplyCurrentTheme()
+        if IsValid(contentPanel) then
+            UpdateContentPanel(contentPanel)
+            BuildSidebar()
+        end
+    end
+
+    ThemeHeader("PRESETS")
+
+    local presetChoices = {}
+    for presetName, _ in pairs(THEME_PRESETS) do
+        table.insert(presetChoices, presetName)
+    end
+    table.sort(presetChoices)
+
+    local presetDD = MakeThemedDropdown(panel, 14, y, 170,
+        presetChoices,
+        options.Theme.Preset or "Kerosene",
+        function(val)
+            options.Theme.Preset = val
+        end)
+
+    local presetApply = vgui.Create("DButton", panel)
+    presetApply:SetPos(192, y)
+    presetApply:SetSize(78, 24)
+    presetApply:SetText("")
+    presetApply.Paint = function(self, w, h)
+        draw.RoundedBox(6, 0, 0, w, h, self:IsHovered() and COL_BTNHOV or COL_BTN)
+        surface.SetDrawColor(COL_BORDER)
+        surface.DrawOutlinedRect(0, 0, w, h, 1)
+        draw.SimpleText("Apply", GetMenuFont(true), w / 2, h / 2, COL_TEXTPRI, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+    end
+    presetApply.DoClick = function()
+        ApplyThemePreset(options.Theme.Preset or "Kerosene")
+        RefreshThemePanels()
+    end
+
+    local presetHint = vgui.Create("DLabel", panel)
+    presetHint:SetPos(278, y + 4)
+    presetHint:SetFont(GetMenuFont(false))
+    presetHint:SetText("Presets update palette and both font families.")
+    presetHint:SetTextColor(COL_TEXTMUT)
+    presetHint:SizeToContents()
+    y = y + 34
+
+    ThemeHeader("FONTS")
+
+    local menuFontLbl = vgui.Create("DLabel", panel)
+    menuFontLbl:SetPos(14, y + 4)
+    menuFontLbl:SetFont(GetMenuFont(false))
+    menuFontLbl:SetText("Menu Font")
+    menuFontLbl:SetTextColor(COL_TEXTMUT)
+    menuFontLbl:SizeToContents()
+    local menuFontDD = MakeThemedDropdown(panel, 90, y, 160,
+        THEME_FONT_CHOICES,
+        options.Theme.MenuFontFamily or "Tahoma",
+        function(val)
+            options.Theme.MenuFontFamily = val
+            options.Theme.Preset = "Custom"
+            RefreshThemePanels()
+        end)
+
+    local espFontLbl = vgui.Create("DLabel", panel)
+    espFontLbl:SetPos(270, y + 4)
+    espFontLbl:SetFont(GetMenuFont(false))
+    espFontLbl:SetText("ESP Font")
+    espFontLbl:SetTextColor(COL_TEXTMUT)
+    espFontLbl:SizeToContents()
+    local espFontDD = MakeThemedDropdown(panel, 334, y, 160,
+        THEME_FONT_CHOICES,
+        options.Theme.ESPFontFamily or "Tahoma",
+        function(val)
+            options.Theme.ESPFontFamily = val
+            options.Theme.Preset = "Custom"
+            RefreshThemePanels()
+        end)
+    y = y + 34
+
+    ThemeHeader("PALETTE")
+
+    local paletteRows = {
+        { label = "Background", key = "BG" },
+        { label = "Header",     key = "HEADER" },
+        { label = "Border",     key = "BORDER" },
+        { label = "Accent",     key = "ACCENT" },
+        { label = "Muted Text", key = "TEXTMUT" },
+        { label = "Main Text",  key = "TEXTPRI" },
+        { label = "Button",     key = "BTN" },
+        { label = "Button Hover", key = "BTNHOV" },
+        { label = "Success",    key = "GREEN" },
+        { label = "Danger",     key = "RED" },
+    }
+
+    for index, row in ipairs(paletteRows) do
+        local paletteKey = row.key
+        local col = (index - 1) % 2
+        local r = math.floor((index - 1) / 2)
+        local baseX = 14 + col * 240
+        local yy = y + r * 28
+
+        local lbl = vgui.Create("DLabel", panel)
+        lbl:SetPos(baseX, yy + 3)
+        lbl:SetFont(GetMenuFont(false))
+        lbl:SetText(row.label)
+        lbl:SetTextColor(COL_TEXTPRI)
+        lbl:SizeToContents()
+
+        MakeColorButton(panel, baseX + 104, yy,
+            function() return MenuPalette[paletteKey] end,
+            function(c)
+                MenuPalette[paletteKey] = CloneColor(c)
+                options.Theme.Preset = "Custom"
+                RefreshThemePanels()
+            end)
+    end
+    y = y + math.ceil(#paletteRows / 2) * 28 + 8
+
+    ThemeHeader("THEME PROFILES")
+
+    local themeEntry = MakeThemedEntry(panel, 14, y, 160, 24, "Theme name...", options.Theme.LastThemeName or "default")
+    local savedThemes = GetSavedThemes()
+    local themeChoices = {}
+    for _, n in ipairs(savedThemes) do
+        table.insert(themeChoices, n)
+    end
+
+    local themeDropdownY = y
+    local themeDropdown = MakeThemedDropdown(panel, 182, themeDropdownY, 150,
+        themeChoices,
+        "Saved themes...",
+        function(val)
+            themeEntry:SetValue(val)
+        end)
+
+    y = y + 34
+
+    local function RefreshThemeDropdown()
+        if IsValid(themeDropdown) then themeDropdown:Remove() end
+        local newThemes = GetSavedThemes()
+        local newChoices = {}
+        for _, n in ipairs(newThemes) do
+            table.insert(newChoices, n)
+        end
+        themeDropdown = MakeThemedDropdown(panel, 182, themeDropdownY, 150,
+            newChoices,
+            "Saved themes...",
+            function(val)
+                themeEntry:SetValue(val)
+            end)
+    end
+
+    local function MakeThemeBtn(lbl, xOff, bw, col, clk)
+        local b = vgui.Create("DButton", panel)
+        b:SetPos(14 + xOff, y)
+        b:SetSize(bw or 72, 28)
+        b:SetText("")
+        local baseCol = col or COL_BTN
+        b.Paint = function(self, w, h)
+            local bg = self:IsHovered() and Color(
+                math.min(baseCol.r + 25, 255),
+                math.min(baseCol.g + 25, 255),
+                math.min(baseCol.b + 25, 255),
+                255
+            ) or baseCol
+            draw.RoundedBox(6, 0, 0, w, h, bg)
+            surface.SetDrawColor(COL_BORDER)
+            surface.DrawOutlinedRect(0, 0, w, h, 1)
+            draw.SimpleText(lbl, GetMenuFont(true), w / 2, h / 2, COL_TEXTPRI, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        end
+        b.DoClick = clk
+        return b
+    end
+
+    MakeThemeBtn("Create", 0, 72, COL_BTN, function()
+        local name = themeEntry:GetValue()
+        if name == "" then name = "default" end
+        options.Theme.LastThemeName = name
+        file.Write("kero_theme_" .. name .. ".txt", SerialiseTheme())
+        KeroWhitelistNotify("Theme '" .. name .. "' created.", NOTIFY_HINT, 5)
+        RefreshThemeDropdown()
+    end)
+
+    MakeThemeBtn("Save", 78, 72, COL_BTN, function()
+        local name = themeEntry:GetValue()
+        if name == "" then name = "default" end
+        ShowConfirm("Save theme '" .. name .. "'?", function()
+            options.Theme.LastThemeName = name
+            file.Write("kero_theme_" .. name .. ".txt", SerialiseTheme())
+            KeroWhitelistNotify("Theme '" .. name .. "' saved.", NOTIFY_HINT, 5)
+            RefreshThemeDropdown()
+        end)
+    end)
+
+    MakeThemeBtn("Load", 156, 72, COL_BTN, function()
+        local name = themeEntry:GetValue()
+        if name == "" then name = "default" end
+        local data = file.Read("kero_theme_" .. name .. ".txt", "DATA")
+        if data then
+            options.Theme.LastThemeName = name
+            DeserialiseTheme(data)
+            KeroWhitelistNotify("Theme '" .. name .. "' loaded.", NOTIFY_HINT, 5)
+        else
+            KeroWhitelistNotify("Theme '" .. name .. "' not found.", NOTIFY_ERROR, 5)
+        end
+    end)
+
+    MakeThemeBtn("Delete", 234, 72, COL_RED, function()
+        local name = themeEntry:GetValue()
+        if name == "" then return end
+        ShowConfirm("Delete theme '" .. name .. "'?", function()
+            local path = "kero_theme_" .. name .. ".txt"
+            if file.Exists(path, "DATA") then
+                file.Delete(path)
+                KeroWhitelistNotify("Theme '" .. name .. "' deleted.", NOTIFY_HINT, 5)
+                themeEntry:SetValue("")
+                RefreshThemeDropdown()
+            else
+                KeroWhitelistNotify("Theme '" .. name .. "' not found.", NOTIFY_ERROR, 5)
+            end
+        end)
+    end)
+end
 
 UpdateContentPanel = function(panel)
         panel:Clear()
@@ -3113,6 +3631,8 @@ UpdateContentPanel = function(panel)
                     end
                 end
             end
+        elseif currentTab == "Theme" then
+            BuildThemePanel(panel)
         end
 end -- end UpdateContentPanel
 
@@ -3138,7 +3658,7 @@ BuildSidebar = function()
                 draw.RoundedBox(4, 0, 0, w, h, COL_BTN)
             end
             local tc = active and COL_TEXTPRI or (hov and COL_TEXTPRI or COL_TEXTMUT)
-            draw.SimpleText(tabName, "DermaDefault", 14, h/2, tc, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            draw.SimpleText(tabName, GetMenuFont(false), 14, h/2, tc, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
         end
         btn.DoClick = function()
             if currentTab == tabName then return end
@@ -3386,7 +3906,7 @@ local KERO_ASCII = [[
  | |/ / / _ \| '__/ _ \/ __/ / _ \ '_ \ / _ \
  | ' < |  __/| | | (_) \__ \|  __/ | | |  __/
  |_|\_\ \___||_|  \___/|___/ \___|_| |_|\___|
-                                        v1.66
+                                        v1.70
 ]]
 
 local function PrintKeroBanner()
@@ -3948,7 +4468,7 @@ local function KeroDisplayNames()
             if not vis then continue end
             local name = (options.Visuals.NameType == "Steam Name") and ply:SteamName() or ply:Nick()
             local lx, ly, ha, va = ESPLabelPos(x1,y1,x2,y2, ESPArrangement.Name)
-            local font   = ESPArrangement.Name.bold and "DermaDefaultBold" or "DermaDefault"
+            local font   = GetESPFont(ESPArrangement.Name.bold)
             local col    = GetPlayerESPColor(ply, "Name")
             if ESPArrangement.Name.outline then
                 draw.SimpleTextOutlined(name, font, lx, ly, col, ha, va, 1, Color(0,0,0,200))
@@ -4005,7 +4525,7 @@ local function KeroDrawMoney()
             if not vis then continue end
             local money = ply:getDarkRPVar("money") or 0
             local lx, ly, ha, va = ESPLabelPos(x1,y1,x2,y2, ESPArrangement.Money)
-            local font   = ESPArrangement.Money.bold and "DermaDefaultBold" or "DermaDefault"
+            local font   = GetESPFont(ESPArrangement.Money.bold)
             local col    = GetPlayerESPColor(ply, "Money")
             if ESPArrangement.Money.outline then
                 draw.SimpleTextOutlined(FormatMoney(money), font, lx, ly, col, ha, va, 1, Color(0,0,0,200))
@@ -4028,7 +4548,7 @@ local function KeroDrawWeapon()
             local wep = ply:GetActiveWeapon()
             local wname = IsValid(wep) and string.gsub(wep:GetClass(),"weapon_","") or "None"
             local lx, ly, ha, va = ESPLabelPos(x1,y1,x2,y2, ESPArrangement.Weapon)
-            local font   = ESPArrangement.Weapon.bold and "DermaDefaultBold" or "DermaDefault"
+            local font   = GetESPFont(ESPArrangement.Weapon.bold)
             local col    = GetPlayerESPColor(ply, "Weapon")
             if ESPArrangement.Weapon.outline then
                 draw.SimpleTextOutlined(wname, font, lx, ly, col, ha, va, 1, Color(0,0,0,200))
@@ -4050,7 +4570,7 @@ local function KeroDrawDistance()
             if not vis then continue end
             local dist = math.Round(LocalPlayer():GetPos():Distance(ply:GetPos()))
             local lx, ly, ha, va = ESPLabelPos(x1,y1,x2,y2, ESPArrangement.Distance)
-            local font   = ESPArrangement.Distance.bold and "DermaDefaultBold" or "DermaDefault"
+            local font   = GetESPFont(ESPArrangement.Distance.bold)
             local col    = GetPlayerESPColor(ply, "Distance")
             if ESPArrangement.Distance.outline then
                 draw.SimpleTextOutlined(dist.."m", font, lx, ly, col, ha, va, 1, Color(0,0,0,200))
@@ -4083,7 +4603,7 @@ local function KeroDrawWorldESP()
             DrawBox2D(x1, y1, x2, y2, GetVisualColor("WorldESP"))
             local sp = ent:GetPos():ToScreen()
             if sp.visible then
-                draw.SimpleText(cls,"DermaDefault",sp.x,y1-2,GetVisualColor("WorldESP"),TEXT_ALIGN_CENTER,TEXT_ALIGN_BOTTOM)
+                draw.SimpleText(cls, GetESPFont(false), sp.x, y1 - 2, GetVisualColor("WorldESP"), TEXT_ALIGN_CENTER, TEXT_ALIGN_BOTTOM)
             end
         end
     end
@@ -4694,7 +5214,7 @@ local function KeroDrawSuitName()
         if suitName == "" then continue end  -- hide when no suit equipped
         local arr  = ESPArrangement.SuitName
         local lx, ly, ha, va = ESPLabelPos(x1,y1,x2,y2, arr)
-        local font = arr.bold and "DermaDefaultBold" or "DermaDefault"
+        local font = GetESPFont(arr.bold)
         local col  = GetPlayerESPColor(ply, "SuitName")
         if arr.outline then
             draw.SimpleTextOutlined(suitName, font, lx, ly, col, ha, va, 1, Color(0,0,0,200))
@@ -4732,7 +5252,7 @@ local function KeroDrawSuitHealth()
         end
         local arr  = ESPArrangement.SuitHealth
         local lx, ly, ha, va = ESPLabelPos(x1,y1,x2,y2, arr)
-        local font = arr.bold and "DermaDefaultBold" or "DermaDefault"
+        local font = GetESPFont(arr.bold)
         local col  = GetPlayerESPColor(ply, "SuitHealth")
         if arr.outline then
             draw.SimpleTextOutlined(label, font, lx, ly, col, ha, va, 1, Color(0,0,0,200))
@@ -5280,7 +5800,7 @@ local function DrawOverlay()
 			cam.End3D()
 
 			-- Name text (same style)
-			draw.SimpleText(displayName, "DermaDefault", ts.x, ts.y, color_green, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+			draw.SimpleText(displayName, GetESPFont(false), ts.x, ts.y, color_green, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
 		end
 	end
 
