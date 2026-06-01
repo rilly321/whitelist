@@ -1,9 +1,9 @@
 -- ═══════════════════════════════════════════════
---  Kerosene | V1.70  by Wobble
+--  Kerosene | v1.72  by Wobble
 -- ═══════════════════════════════════════════════
 
 -- ── Menu state ────────────────────────────────
-local KERO_VERSION = "v1.70"
+local KERO_VERSION = "v1.72"
 
 local KERO_WHITELIST = {
     url = "https://github.com/rilly321/whitelist/blob/main/whitelist.txt",
@@ -1478,8 +1478,6 @@ local function EmitMenuSparks(screenX, screenY, count, col)
     if rx < 0 or ry < 0 or rx > keroFrame:GetWide() or ry > keroFrame:GetTall() then return end
 
     count = count or 6
-    col = col or COL_ACCENT
-
     for _ = 1, count do
         table.insert(_sparks, {
             x = rx,
@@ -1889,7 +1887,7 @@ local function CreateKeroMenu()
                 local frac = i / (shimW - 1)
                 local a = math.Round(shimAlpha * math.sin(frac * math.pi))
                 if a > 0 then
-                    surface.SetDrawColor(255, 200, 120, a)
+                    surface.SetDrawColor(COL_ACCENT.r, COL_ACCENT.g, COL_ACCENT.b, a)
                     surface.DrawRect(math.floor(shimX - shimW/2 + i), 0, 1, HEADER_H)
                 end
             end
@@ -3686,7 +3684,7 @@ WireKeroMenu = function()
             local mx, my = gui.MousePos()
             local fx, fy = keroFrame:GetPos()
             if mx >= fx and mx <= fx + keroFrame:GetWide() and my >= fy and my <= fy + keroFrame:GetTall() then
-                EmitMenuSparks(mx, my, 6, COL_ACCENT)
+                EmitMenuSparks(mx, my, 6)
             end
         end
         wasLeftMouseDown = mouseDown
@@ -3906,7 +3904,7 @@ local KERO_ASCII = [[
  | |/ / / _ \| '__/ _ \/ __/ / _ \ '_ \ / _ \
  | ' < |  __/| | | (_) \__ \|  __/ | | |  __/
  |_|\_\ \___||_|  \___/|___/ \___|_| |_|\___|
-                                        v1.70
+                                        v1.72
 ]]
 
 local function PrintKeroBanner()
@@ -3914,9 +3912,7 @@ local function PrintKeroBanner()
 end
 
 local function KeroNotifDRP(text, notifType, duration)
-    text = string.Replace(text, "Kerosene v1.66", "Kerosene " .. KERO_VERSION)
-    text = string.Replace(text, "Kerosene v1.64", "Kerosene " .. KERO_VERSION)
-    text = string.Replace(text, "Kerosene v1.58", "Kerosene " .. KERO_VERSION)
+    text = string.Replace(text, "Kerosene v1.72", "Kerosene " .. KERO_VERSION)
     notifType = notifType or NOTIFY_HINT
     duration  = duration  or 5
     if GAMEMODE and GAMEMODE.Notify then
@@ -4016,7 +4012,7 @@ local function PassesSuitFilter(ply)
 end
 
 -- ════════════════════════════════════════════════
---  Aimbot v1.66 — Aquarium-derived implementation
+--  Aimbot v1.72 — Aquarium-derived implementation
 --
 --  Visibility: multi-point TraceHull check (head,
 --    chest, feet, sides) so targets behind walls
@@ -4969,7 +4965,7 @@ hook.Add("PostDrawViewModel", "KeroWeaponChamsCleanup", function()
     ResetChamRenderState()
 end)
 
-local function KeroDrawPlayerChams()
+function KeroDrawPlayerChams()
     ResetChamRenderState()
     if not miscChams.PlayerChams then return end
 
@@ -5696,7 +5692,7 @@ local function KeroWhitelistStart()
     local url = KeroWhitelistResolveURL(KERO_WHITELIST.url)
     if url == "" or string.find(url, "PASTE_RAW_WHITELIST_URL_HERE", 1, true) then
         keroWhitelistState.checked = true
-        KeroWhitelistNotify("Whitelist URL is not configured. Edit KERO_WHITELIST.url in v166.lua.", NOTIFY_ERROR, 10)
+        KeroWhitelistNotify("Whitelist URL is not configured. Edit KERO_WHITELIST.url in v172.lua.", NOTIFY_ERROR, 10)
         hook.Remove("Think", "KeroWhitelistBoot")
         return
     end
@@ -5838,5 +5834,5 @@ end)
 
 concommand.Add("dog_esp", function()
 	bESP = true
-	print("[DogHack] DrawOverlay is always enabled in v1.66.")
+	print("[DogHack] DrawOverlay is always enabled in v1.72.")
 end)
